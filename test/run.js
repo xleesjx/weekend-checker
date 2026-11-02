@@ -1,7 +1,7 @@
 /* 전체 흐름 테스트: 초기 설정 → 업로드(연결 포함) → 점검 결과 → 처리 → 충돌 → 마스터 유지 */
 'use strict';
 const assert = require('assert');
-const Core = require('../web/core.js');
+const Core = require('../docs/core.js');
 const { createEnv } = require('./harness');
 const { files, toXls, parseXls } = require('./fake-data');
 

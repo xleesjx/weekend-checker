@@ -22,7 +22,7 @@ env.call('upload', { date: '2026-11-07', files: [files.c1, files.c2].map(load) }
 env.call('upload', { date: '2026-11-07', files: [files.c1, files.c2].map(load), mappings: maps });
 env.call('status', { date: '2026-11-07', no: '251230', status: 'done', memo: '통화 후 취소', prevAt: '' });
 
-const WEB = path.join(__dirname, '..', 'web');
+const WEB = path.join(__dirname, '..', 'docs');
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (p === '/') p = '/index.html';

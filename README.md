@@ -4,9 +4,9 @@
 중복·단체·대상 학년·관외·신청 제한·입력 오류·학부모 연락처를 자동으로 점검하는 웹앱입니다.
 2~3명이 함께 처리 상태를 보며 작업할 수 있습니다.
 
-- 설치 방법: [docs/설치안내.md](docs/설치안내.md)
-- `web/` — GitHub Pages에 올리는 화면 (`config.js`에 주소 두 개만 입력)
+- 설치 방법: [guide/설치안내.md](guide/설치안내.md)
+- `docs/` — GitHub Pages가 보여 주는 웹 화면 (`config.js`에 주소 두 개만 입력)
 - `gas/` — 구글 시트의 Apps Script에 붙여넣는 서버 코드
 - `test/` — 가짜 명단으로 하는 자동 테스트 (`npm test`)
 
-판정 로직은 `web/core.js` 하나에 있고, `npm run build`로 `gas/Core.gs`에 복사합니다.
+판정 로직은 `docs/core.js` 하나에 있고, `npm run build`로 `gas/Core.gs`에 복사합니다.

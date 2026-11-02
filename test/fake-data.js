@@ -1,7 +1,7 @@
 /* 실제 엑셀과 같은 형식의 가짜 명단 (.xls, 모든 칸 텍스트) */
 'use strict';
 const XLSX = require(process.env.XLSX_PATH || 'xlsx');
-const Core = require('../web/core.js');
+const Core = require('../docs/core.js');
 
 const B = '[초2~3학년]11월7일 주말SW교실 기초코딩 오전반 ';
 const E = '[초3~5학년]11월7일 주말SW교실 탐험코딩 오전반 ';

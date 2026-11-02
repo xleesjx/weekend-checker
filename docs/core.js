@@ -1,6 +1,6 @@
 /*
  * 주말 신청 점검 — 공통 판정 로직
- * 브라우저(web/core.js)와 Apps Script(gas/Core.gs)에서 같은 내용으로 사용합니다.
+ * 브라우저(docs/core.js)와 Apps Script(gas/Core.gs)에서 같은 내용으로 사용합니다.
  * gas/Core.gs 는 이 파일을 그대로 복사한 것입니다 (npm run build 또는 cp).
  */
 var Core = (function () {

@@ -3,7 +3,7 @@
   "private": true,
   "description": "주말 프로그램 신청 명단 점검 웹앱",
   "scripts": {
-    "build": "node -e \"require('fs').copyFileSync('web/core.js','gas/Core.gs')\"",
+    "build": "node -e \"require('fs').copyFileSync('docs/core.js','gas/Core.gs')\"",
     "test": "npm run build && node test/run.js",
     "fake": "node test/fake-data.js"
   }
