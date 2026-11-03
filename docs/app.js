@@ -5,9 +5,11 @@
   var CFG = window.APP_CONFIG || {};
   var H = Core.HEADER;
   var POLL_MS = 20000;
+  // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
+  var APP_VERSION = '7';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
-    showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null
+    showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false
   };
   var root = document.getElementById('app');
 
@@ -103,14 +105,23 @@
       try { if (!localStorage.getItem('guide-v1')) { showGuide(); localStorage.setItem('guide-v1', '1'); } } catch (e) { /* 무시 */ }
     });
     setInterval(poll, POLL_MS);
+    checkVersion();
+    setInterval(checkVersion, 10 * 60000);
   }
 
   /* ───────── 데이터 ───────── */
+
+  function checkVersion() {
+    fetch('version.txt?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (v) { v = v.trim(); if (v && v !== APP_VERSION && !S.newVersion) { S.newVersion = true; render(); } })
+      .catch(function () { /* 다음에 다시 */ });
+  }
 
   function load(date) {
     setBusy(true);
     return api('state', { date: date }).then(function (res) {
       S.data = res; S.date = res.date; S.rev = res.rev; S.user = res.user || S.user;
+      S.loadedAt = new Date();
       render();
     }).catch(function (e) { if (e.code !== 'AUTH' && e.code !== 'FORBIDDEN') toast(e.message); })
       .then(function () { setBusy(false); });
@@ -314,8 +325,10 @@
       VIEWS.map(function (v) {
         var n = v[0] === 'review' && (counts.red + counts.amber) ? ' (' + (counts.red + counts.amber) + ')' : '';
         return '<button data-view="' + v[0] + '" class="' + (S.view === v[0] ? 'on' : '') + '">' + v[1] + n + '</button>';
-      }).join('') + '</nav><div class="top-right"><button class="btn sm" data-act="guide">? 도움말</button>' +
+      }).join('') + '</nav><div class="top-right"><span class="muted small">' + (S.loadedAt ? S.loadedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 기준' : '') + '</span>' +
+      '<button class="btn sm" data-act="refresh" title="서버에서 최신 명단·처리 상태·설정을 다시 불러옵니다">새로고침</button><button class="btn sm" data-act="guide">? 도움말</button>' +
       '<a href="' + esc(S.data.sheetUrl) + '" target="_blank" rel="noopener">구글 시트</a><span class="chip">' + esc((S.data.user && S.data.user.name) || '') + ' 선생님</span></div></div><div id="busy" class="' + (S.busy ? 'busy-bar' : '') + '"></div></header>';
+    if (S.newVersion) html += '<div class="wrap"><div class="card pad row between" style="margin-top:12px;border-color:#BFD0F5;background:#F0F5FF"><span>웹앱 새 버전이 나왔습니다.</span><button class="btn sm primary" data-act="update">지금 적용</button></div></div>';
     html += '<main class="wrap">';
     if (!S.date) html += '<div class="card pad">설정_수업일 탭에 수업일이 없습니다. 구글 시트에서 수업일을 먼저 입력해 주세요.</div>';
     else if (S.view === 'home') html += viewHome(counts);
@@ -547,6 +560,8 @@
     if (act === 'upload') uploadFromFolder();
     else if (act === 'folder') changeFolder();
     else if (act === 'guide') showGuide();
+    else if (act === 'refresh') { S.settings = null; checkVersion(); load(S.date).then(function () { toast('최신 내용으로 새로고침했습니다.', 2000); }); }
+    else if (act === 'update') { location.replace(location.pathname + '?v=' + Date.now()); }
     else if (act === 'close-result') { S.lastUpload = null; render(); }
     else if (act === 'reload-settings') { S.settings = null; render(); }
     else if (act === 'neis') {
