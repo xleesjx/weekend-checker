@@ -52,6 +52,14 @@ const server = http.createServer((req, res) => {
   await page.goto('http://localhost:' + port + '/');
   await page.waitForSelector('.steps', { timeout: 8000 }).catch(async (e) => { console.log(await page.content()); throw e; });
   await page.screenshot({ path: path.join(OUT, '1-home.png'), fullPage: true });
+  // 시각 없는 이름의 파일을 직접 올리기 (파일 선택 창 대신)
+  const xbuf = toXls(files.explore.rows.slice(0, 3));
+  await page.setInputFiles('#pick', [{ name: '통합예약신청자목록 (1).xls', mimeType: 'application/vnd.ms-excel', buffer: xbuf }]);
+  await page.waitForSelector('.result-line', { timeout: 15000 });
+  const line = await page.$eval('.result-line', (e) => e.textContent);
+  console.log('직접 올리기 결과:', line);
+  if (!/반영|이미 더 최근/.test(line)) throw new Error('시각 없는 파일 이름 업로드 실패: ' + line);
+  await page.screenshot({ path: path.join(OUT, '0-upload.png') });
   await page.click('[data-view=review]');
   await page.screenshot({ path: path.join(OUT, '2-review.png'), fullPage: true });
   await page.click('[data-done="251210"]');

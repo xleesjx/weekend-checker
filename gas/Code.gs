@@ -312,7 +312,7 @@ API.state = function (req, user) {
   out.uploads = uploads.filter(function (u) { return Core.instanceCovers(u[4], date) || (u[3] >= from && u[3] <= date + 'T99'); })
     .map(function (u) { return { at: u[0], by: u[1], file: u[2], fileTs: u[3], inst: u[4], name: u[5], count: u[6], result: u[7] }; })
     .reverse();
-  out.uploadedFiles = uploads.map(function (u) { return u[2]; });
+  out.uploadedFiles = uploads.map(function (u) { return u[2] + '|' + u[3]; });
   return out;
 };
 
@@ -341,9 +341,10 @@ API.upload = function (req, user) {
       var p = Core.parseTitle(f.title, year);
       var res = { file: f.fileName, title: f.title, result: '', detail: '' };
       results.push(res);
-      var meta = Core.parseFileName(f.fileName);
+      // 받은 시각은 화면에서 계산해 보냅니다 (이름에 시각이 없으면 파일 저장 시각)
+      var meta = Core.isListFile(f.fileName) && Core.validTs(f.fileTs) ? { date: f.fileTs.slice(0, 10), ts: f.fileTs } : null;
       if (!sameHeader_(f.header)) { res.result = '오류'; res.detail = '엑셀 열 구성이 예상과 다름'; return null; }
-      if (!meta) { res.result = '오류'; res.detail = '파일 이름 형식이 다름'; return null; }
+      if (!meta) { res.result = '오류'; res.detail = '통합예약 명단 파일이 아니거나 받은 시각을 알 수 없음'; return null; }
       if (!req.ignoreWindow && !Core.inWindow(meta.date, date)) { res.result = '건너뜀'; res.detail = '접수 기간(' + Core.shortDate(Core.addDays(date, -Core.WINDOW_DAYS)) + '~' + Core.shortDate(date) + ') 밖의 파일'; return null; }
       if (!p.start) { res.result = '오류'; res.detail = '예약명에서 수업 날짜를 찾지 못함'; return null; }
       if (!Core.instanceCovers(Core.instanceKey(p), date)) { res.result = '건너뜀'; res.detail = '예약명 날짜(' + Core.shortDate(p.start) + ')가 이번 수업일과 다름'; return null; }

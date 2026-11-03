@@ -172,12 +172,14 @@
       var picked = [];
       for await (var entry of dir.values()) {
         if (entry.kind !== 'file') continue;
-        var meta = Core.parseFileName(entry.name);
+        if (!Core.isListFile(entry.name)) continue;
+        var file = await entry.getFile();
+        var meta = Core.fileStamp(file.name, file.lastModified);
         if (!meta) continue;
         stat.found++;
         if (!Core.inWindow(meta.date, S.date)) { stat.outside++; continue; }
-        if ((S.data.uploadedFiles || []).indexOf(entry.name) >= 0) { stat.already++; continue; }
-        picked.push(await entry.getFile());
+        if ((S.data.uploadedFiles || []).indexOf(file.name + '|' + meta.ts) >= 0) { stat.already++; continue; }
+        picked.push(file);
       }
       await sendFiles(picked, stat);
     } catch (e) { toast('명단을 읽는 중 문제가 생겼습니다: ' + e.message); }
@@ -190,7 +192,7 @@
     try {
       var stat = { found: 0, outside: 0, already: 0 }, picked = [], other = 0;
       Array.prototype.forEach.call(fileList, function (f) {
-        var meta = Core.parseFileName(f.name);
+        var meta = Core.fileStamp(f.name, f.lastModified);
         if (!meta) { other++; return; }
         stat.found++;
         if (!Core.inWindow(meta.date, S.date)) { stat.outside++; return; }
@@ -210,7 +212,7 @@
     var header = (aoa[0] || []).map(function (s) { return String(s).trim(); });
     var rows = aoa.slice(1).filter(function (r) { return r.some(function (c) { return String(c).trim() !== ''; }); })
       .map(function (r) { return H.map(function (_, i) { return String(r[i] === undefined || r[i] === null ? '' : r[i]).trim(); }); });
-    var meta = Core.parseFileName(file.name);
+    var meta = Core.fileStamp(file.name, file.lastModified);
     return { fileName: file.name, fileTs: meta.ts, header: header, title: rows.length ? rows[0][1] : '', rows: rows };
   }
 

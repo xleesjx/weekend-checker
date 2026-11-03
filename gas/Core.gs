@@ -12,7 +12,10 @@ var Core = (function () {
   // 웹 화면에서 기본으로 감추는 원본 열 (이메일, 단체명, 단체인원수, 기타내용)
   var HIDDEN_COLS = [4, 6, 7, 8];
 
-  var FILE_RE = /^통합예약신청자목록 - (\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})\.(\d{3})\.xls$/;
+  // 브라우저에 따라 '통합예약신청자목록.xls', '통합예약신청자목록 (1).xls' 또는 이름에 받은 시각이 붙은 형식으로 저장됩니다
+  var LIST_RE = /^통합예약신청자목록(?:\s*-\s*\d{4}-\d{2}-\d{2}T\d{6}\.\d{3})?(?:\s*\(\d+\))?\.xls$/;
+  var FILE_RE = /^통합예약신청자목록\s*-\s*(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})\.(\d{3})(?:\s*\(\d+\))?\.xls$/;
+  var TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}$/;
   var DATE_RE = /(\d{1,2})\s*월\s*(\d{1,2})\s*일(?:\s*~\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일)?/;
   var HOMESCHOOL_RE = /홈\s*스쿨|학교\s*밖|대안|미취학|해당\s*없음|없음/;
   var WINDOW_DAYS = 6;
@@ -53,6 +56,27 @@ var Core = (function () {
       ts: m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6] + '.' + m[7]
     };
   }
+
+  function isListFile(name) { return LIST_RE.test(str(name)); }
+
+  /** 밀리초 시각 → 한국 시각 'YYYY-MM-DDTHH:MM:SS.mmm' */
+  function tsFromMillis(ms) {
+    var k = new Date(+ms + 9 * 3600000);
+    return ymd(k.getUTCFullYear(), k.getUTCMonth() + 1, k.getUTCDate()) + 'T' + pad2(k.getUTCHours()) + ':' + pad2(k.getUTCMinutes()) + ':' +
+      pad2(k.getUTCSeconds()) + '.' + ('00' + k.getUTCMilliseconds()).slice(-3);
+  }
+
+  /** 명단 파일의 받은 날짜·시각. 이름에 시각이 있으면 그것을, 없으면 파일 저장 시각을 씁니다. 명단 파일이 아니면 null */
+  function fileStamp(name, lastModified) {
+    if (!isListFile(name)) return null;
+    var p = parseFileName(name);
+    if (p) return p;
+    if (!lastModified) return null;
+    var ts = tsFromMillis(lastModified);
+    return { date: ts.slice(0, 10), ts: ts };
+  }
+
+  function validTs(ts) { return TS_RE.test(str(ts)); }
 
   /** 파일 날짜가 수업일 6일 전 ~ 수업일 안에 있는지 */
   function inWindow(fileDate, classDate) {
@@ -350,6 +374,7 @@ var Core = (function () {
   return {
     HEADER: HEADER, C: C, HIDDEN_COLS: HIDDEN_COLS, ISSUE: ISSUE, WINDOW_DAYS: WINDOW_DAYS, CANCELLED: CANCELLED,
     str: str, addDays: addDays, shortDate: shortDate, parseFileName: parseFileName, inWindow: inWindow,
+    isListFile: isListFile, tsFromMillis: tsFromMillis, fileStamp: fileStamp, validTs: validTs,
     parseGradeRange: parseGradeRange, gradeLabel: gradeLabel, rangeLabel: rangeLabel, parseTitle: parseTitle,
     schoolKey: schoolKey, schoolLevel: schoolLevel, buildSchoolIndex: buildSchoolIndex, interpret: interpret,
     analyzeRound: analyzeRound, fingerprint: fingerprint, currentRound: currentRound, roundNumber: roundNumber,

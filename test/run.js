@@ -13,7 +13,11 @@ function codes(row) { return row.issues.map((i) => i.code).sort().join(','); }
 /* 1. 판정 로직 단위 테스트 */
 (function unit() {
   ok(Core.parseFileName('통합예약신청자목록 - 2026-10-27T100325.738.xls').ts === '2026-10-27T10:03:25.738', '파일 이름 해석');
-  ok(Core.parseFileName('통합예약신청자목록 - 2026-10-27T100325.738 (1).xls') === null, '이름이 바뀐 파일은 제외');
+  ok(Core.parseFileName('통합예약신청자목록 - 2026-10-27T100325.738 (1).xls').date === '2026-10-27', '시각 이름 + (1)');
+  ok(Core.isListFile('통합예약신청자목록.xls') && Core.isListFile('통합예약신청자목록 (2).xls') && !Core.isListFile('다른파일.xls') && !Core.isListFile('통합예약신청자목록 복사본.xls'), '명단 파일 이름 판별');
+  const kst = Date.parse('2026-11-03T10:54:12.000+09:00');
+  ok(Core.fileStamp('통합예약신청자목록 (1).xls', kst).ts === '2026-11-03T10:54:12.000', '시각 없는 이름은 파일 저장 시각(한국 시각)');
+  ok(Core.fileStamp('통합예약신청자목록 - 2026-10-27T100325.738.xls', kst).date === '2026-10-27', '이름의 시각이 우선');
   ok(Core.inWindow('2026-11-01', '2026-11-07') && !Core.inWindow('2026-10-31', '2026-11-07') && Core.inWindow('2026-11-07', '2026-11-07'), '접수 기간 = 수업일 6일 전~수업일');
   const t = Core.parseTitle('[초5~중2학년]11월7일~12월5일 주말SW교실 마스터코딩 오전반 ', '2026');
   ok(t.start === '2026-11-07' && t.end === '2026-12-05' && t.grade.min === 5 && t.grade.max === 8, '마스터 예약명 기간·학년');
@@ -121,5 +125,17 @@ ok(res.rows.some((r) => r.no === '250980'), '마스터 명단 11/14에도 유지
 ok(/DUP/.test(codes(row('251500'))) && /DUP/.test(codes(row('250970'))), '마스터 수강생이 다른 오전반 신청 → 중복');
 ok(!res.rows.some((r) => r.no === '251204'), '11/7 기초 명단은 11/14에 안 보임');
 ok(res.classes.some((c) => c['접수명'] === '메이커1') && !res.classes.some((c) => c['접수명'] === '창의 3,4반'), '11/14부터 메이커반 운영');
+
+// 시각 없는 이름(통합예약신청자목록 (1).xls)도 받은 시각 순서로 처리
+env.setNow(new Date('2026-11-11T10:00:00+09:00'));
+const plain = (n, ts, rows) => Object.assign(load({ name: '통합예약신청자목록 - 2026-11-11T000000.000.xls', rows }), { fileName: n, fileTs: ts });
+const e1 = [['251600', '[초3~5학년]11월14일 주말SW교실 탐험코딩 오전반', '가가가', '010-0000-1600', '', '개인', '', '', '', '나나나', '가온초', '4-1', '대기', 'fake_p1']];
+const e2 = e1.concat([['251601', '[초3~5학년]11월14일 주말SW교실 탐험코딩 오전반', '다다다', '010-0000-1601', '', '개인', '', '', '', '라라라', '가온초', '4-2', '대기', 'fake_p2']]);
+res = env.call('upload', { date: '2026-11-14', files: [plain('통합예약신청자목록 (2).xls', '2026-11-11T09:40:00.000', e2), plain('통합예약신청자목록.xls', '2026-11-11T09:10:00.000', e1)] });
+ok(res.results.find((r) => r.file === '통합예약신청자목록 (2).xls').result === '반영' && res.results.find((r) => r.file === '통합예약신청자목록.xls').result === '건너뜀', '시각 없는 이름: 나중에 받은 파일만 반영');
+res = env.call('upload', { date: '2026-11-14', files: [plain('통합예약신청자목록 (3).xls', 'bad', e1)] });
+ok(res.results[0].result === '오류', '받은 시각이 없으면 거부');
+res = env.call('state', { date: '2026-11-14' });
+ok(res.uploadedFiles.indexOf('통합예약신청자목록 (2).xls|2026-11-11T09:40:00.000') >= 0, '이미 올린 파일은 이름+시각으로 기억');
 
 console.log('테스트 ' + passed + '개 통과');
