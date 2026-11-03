@@ -135,7 +135,19 @@ var Core = (function () {
   }
 
   function normSchool(s) { return str(s).replace(/\s+/g, ''); }
-  function schoolKey(s) { return normSchool(s).slice(0, 2); }
+  var REGION_RE = /^(울산|울주)/;
+  var LEVEL_SUFFIX_RE = /(초등학교|초교|초|중학교|중|고등학교|고|학교)$/;
+
+  /**
+   * 학교 비교용 앞 두 글자. 공식 이름 앞의 지역명(울산·울주)은 빼고 봅니다.
+   * 울산중앙중(학교) / 중앙중 → '중앙', 울주명지초 / 명지초 → '명지'
+   * 단, 지역명 뒤가 학교급뿐이면(울산초, 울산중) 그대로 '울산'
+   */
+  function schoolKey(s) {
+    var t = normSchool(s);
+    if (REGION_RE.test(t) && t.slice(2).replace(LEVEL_SUFFIX_RE, '').length >= 1) t = t.slice(2);
+    return t.slice(0, 2);
+  }
 
   function schoolLevel(s) {
     var t = normSchool(s);

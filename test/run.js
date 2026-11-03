@@ -22,6 +22,16 @@ function codes(row) { return row.issues.map((i) => i.code).sort().join(','); }
   const t = Core.parseTitle('[초5~중2학년]11월7일~12월5일 주말SW교실 마스터코딩 오전반 ', '2026');
   ok(t.start === '2026-11-07' && t.end === '2026-12-05' && t.grade.min === 5 && t.grade.max === 8, '마스터 예약명 기간·학년');
   ok(Core.instanceCovers('2026-11-07~2026-12-05', '2026-11-21') && !Core.instanceCovers('2026-11-07~2026-12-05', '2026-12-12'), '마스터 기간 포함 여부');
+  ok(Core.schoolKey('울산중앙중학교') === '중앙' && Core.schoolKey('울산중앙중') === '중앙' && Core.schoolKey('중앙중') === '중앙', '울산 붙여도 빼도 같은 학교');
+  ok(Core.schoolKey('울주명지초등학교') === '명지' && Core.schoolKey('명지초') === '명지', '울주 붙여도 빼도 같은 학교');
+  ok(Core.schoolKey('울산초등학교') === '울산' && Core.schoolKey('울산초') === '울산' && Core.schoolKey('울산중') === '울산', '울산초·울산중은 그대로');
+  const ridx = Core.buildSchoolIndex([{ name: '울산중앙중학교', level: '중' }]);
+  const rrow = (school) => ['1', 't', '부모', '010', '', '개인', '', '', '', '학생', school, '1-2', '대기', 'id'];
+  ['울산중앙중', '중앙중', '울산중앙중학교'].forEach((sc) => {
+    const a = Core.analyzeRound([{ no: '1', row: rrow(sc), cls: { 시간대: '오전', 수업반: 'x', 접수명: 'x', range: { min: 5, max: 8 } } }], { schools: [{ name: '울산중앙중학교', level: '중' }] }, '2026-11-07');
+    ok(!a['1'].issues.length, sc + ' → 관내·중1 정상: ' + a['1'].issues.map((i) => i.label).join(','));
+  });
+  ok(!!ridx['중앙'], '학교 목록 색인');
   const g = Core.parseGradeRange('초2~3학년');
   ok(g.min === 2 && g.max === 3, '학년 범위');
   ok(Core.nextClassDate([{ date: '2026-10-31' }, { date: '2026-11-07' }, { date: '2026-11-28' }], '2026-11-07') === '2026-11-28', '휴강 뒤 다음 수업일');
