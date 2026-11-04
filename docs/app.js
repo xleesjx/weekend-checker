@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '7';
+  var APP_VERSION = '8';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false
@@ -131,7 +131,7 @@
     if (S.busy || !S.token || document.visibilityState !== 'visible' || document.querySelector('.modal-bg')) return;
     // 메모를 쓰는 중이면 화면을 다시 그리지 않습니다
     var typing = Array.prototype.some.call(document.querySelectorAll('input.memo'), function (m) { return m.value || m === document.activeElement; });
-    if (typing) return;
+    if (typing || (document.activeElement && document.activeElement.id === 'q')) return;
     api('rev').then(function (res) { if (res.rev !== S.rev) load(S.date); }).catch(function () { /* 다음에 다시 */ });
   }
 
@@ -340,8 +340,6 @@
     var y = window.scrollY;
     root.innerHTML = html;
     window.scrollTo(0, y);
-    var q = document.getElementById('q');
-    if (q && S.focusQuery) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
   }
 
   function roundSelect() {
@@ -462,7 +460,7 @@
 
   var WIDTH = { 0: 86, 1: 130, 2: 76, 3: 118, 4: 140, 5: 84, 6: 90, 7: 70, 8: 200, 9: 76, 10: 120, 11: 84, 12: 74, 13: 120 };
 
-  function viewFull() {
+  function fullTableHtml() {
     var cols = visibleCols();
     var q = S.query.trim();
     var colgroup = '<colgroup>' + cols.map(function (i) { return '<col style="width:' + WIDTH[i] + 'px">'; }).join('') + '<col style="width:210px"><col style="width:110px"></colgroup>';
@@ -495,10 +493,21 @@
         });
       });
     });
+    return '<div class="tbox tall"><table class="grid fixed" style="min-width:' + total + 'px">' + colgroup + '<thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>';
+  }
+
+  function viewFull() {
     return '<section class="card pad row between"><div class="row">' + roundSelect() +
       '<input type="search" id="q" value="' + esc(S.query) + '" placeholder="학생명 · 신청자명 · 연락처" aria-label="검색" style="width:220px">' + colsToolbar() + '</div>' +
       '<div class="row small muted"><span class="badge" style="background:var(--red-bg);color:var(--red)">취소 대상</span><span class="badge" style="background:var(--amber-bg);color:var(--amber)">확인 필요</span><span class="badge" style="background:var(--red-cell);color:#fff">문제 칸</span><span>정렬: 원본 엑셀 순서</span></div></section>' +
-      '<section class="card" style="overflow:hidden"><div class="tbox tall"><table class="grid fixed" style="min-width:' + total + 'px">' + colgroup + '<thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div></section>';
+      '<section class="card" id="full-table" style="overflow:hidden">' + fullTableHtml() + '</section>';
+  }
+
+  /* 검색: 입력칸은 그대로 두고 표만 다시 그립니다 (한글 조합 중에는 기다림) */
+  function applySearch(value) {
+    S.query = value;
+    var box = document.getElementById('full-table');
+    if (box) box.innerHTML = fullTableHtml();
   }
 
   function viewUploads() {
@@ -578,7 +587,10 @@
   });
 
   root.addEventListener('input', function (e) {
-    if (e.target.id === 'q') { S.query = e.target.value; S.focusQuery = true; render(); S.focusQuery = false; }
+    if (e.target.id === 'q' && !e.isComposing) applySearch(e.target.value);
+  });
+  root.addEventListener('compositionend', function (e) {
+    if (e.target.id === 'q') applySearch(e.target.value);
   });
 
   root.addEventListener('dragover', function (e) { var d = e.target.closest('#drop'); if (d) { e.preventDefault(); d.classList.add('over'); } });

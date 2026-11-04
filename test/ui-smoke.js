@@ -69,7 +69,12 @@ const server = http.createServer((req, res) => {
   await page.screenshot({ path: path.join(OUT, '3-full.png'), fullPage: false });
   await page.fill('#q', '김하늘');
   await page.waitForTimeout(200);
+  await page.type('#q', '');
+  await page.keyboard.type('');
   const shown = await page.$$eval('table.fixed tbody tr:not(.group)', (rs) => rs.length);
+  const qv = await page.$eval('#q', (e) => e.value);
+  const focused = await page.evaluate(() => document.activeElement && document.activeElement.id);
+  if (qv !== '김하늘' || focused !== 'q') throw new Error('검색칸 값/포커스 유지 실패: ' + qv + ' ' + focused);
   await page.click('[data-view=settings]');
   await page.waitForSelector('text=수업일');
   await page.screenshot({ path: path.join(OUT, '4-settings.png'), fullPage: true });
