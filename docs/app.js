@@ -6,10 +6,11 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '8';
+  var APP_VERSION = '9';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
-    showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false
+    showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
+    f: { result: [], state: [], isNew: false, cls: '' }, sort: { col: null, dir: 0 }
   };
   var root = document.getElementById('app');
 
@@ -104,6 +105,7 @@
     load(null).then(function () {
       try { if (!localStorage.getItem('guide-v1')) { showGuide(); localStorage.setItem('guide-v1', '1'); } } catch (e) { /* 무시 */ }
     });
+    restoreView();
     setInterval(poll, POLL_MS);
     checkVersion();
     setInterval(checkVersion, 10 * 60000);
@@ -301,12 +303,11 @@
 
   /* ───────── 처리 버튼 ───────── */
 
-  function setStatus(no, status) {
+  function setStatus(no, status, memo) {
     if (S.busy) return;
     var r = rowByNo(no);
     if (!r) return;
-    var memoEl = document.getElementById('memo-' + no);
-    var memo = memoEl ? memoEl.value : '';
+    memo = memo || '';
     setBusy(true);
     api('status', { date: S.date, no: no, status: status, memo: memo, prevAt: r.status ? r.status.at : '' })
       .then(function (res) { if (res.conflict) toast(res.message); else S.open = null; })
@@ -356,7 +357,7 @@
       '<span class="muted small">접수 기간 ' + Core.shortDate(from) + ' ~ ' + Core.shortDate(S.date) + ' · 이 기간에 받은 파일만 올라갑니다</span></div>' +
       '<div class="row"><button class="btn" data-act="folder">폴더 변경</button>' + tip('통합예약 엑셀이 저장되는 폴더를 지정합니다. 크롬은 다운로드 폴더 자체는 열지 못하게 막으므로, 다운로드 폴더 안에 「주말명단」 같은 하위 폴더를 만들어 지정하세요. 계정과 PC마다 한 번만 지정하면 기억합니다.') +
       '<button class="btn primary" data-act="upload">명단 올리기</button>' + tip('지정한 폴더에서 이번 접수 기간에 받은 「통합예약신청자목록」 파일 중 아직 안 올린 것만 골라 올립니다. 같은 반 파일이 여러 개면 가장 최근 파일만 반영합니다.') + '</div>' +
-      '<div class="drop" id="drop" style="flex-basis:100%">크롬·엣지가 아니라면 여기에 엑셀 파일을 끌어다 놓으세요</div></section>';
+      '<div class="drop" id="drop" style="flex-basis:100%">' + (window.showDirectoryPicker ? '크롬·엣지가 아니라면 여기에 엑셀 파일을 끌어다 놓으세요' : '이 기기에서는 폴더 지정이 안 되어 [명단 올리기]를 누르면 파일을 직접 고릅니다 (명단 올리기는 PC를 권장합니다)') + '</div></section>';
 
     if (S.lastUpload) html += uploadResult(S.lastUpload);
 
@@ -387,9 +388,16 @@
         var live = rows.filter(function (r) { return !r.cancelled; });
         var red = live.filter(function (r) { return r.level === 'red' && !r.status; }).length;
         var amber = live.filter(function (r) { return r.level === 'amber' && !r.status; }).length;
+        var approved = live.filter(function (r) { return r.cells[12] === '승인'; }).length;
+        var waiting = live.filter(function (r) { return r.cells[12] === '대기'; });
+        var waitOk = waiting.filter(function (r) { return !r.level || r.status; }).length;
+        var fresh = live.filter(function (r) { return r.isNew; }).length;
+        var go = esc(c['접수명']);
         return '<article class="card ccard"><div class="row between"><b>' + esc(c['접수명']) + '</b><span class="muted small">' + esc(c.rangeText) + '</span></div>' +
-          '<div>신청 <b style="font-size:20px">' + live.length + '</b> <span class="muted">/ 정원 ' + esc(c.cap) + '</span></div>' +
+          '<div>신청 <b style="font-size:20px">' + live.length + '</b> <span class="muted">/ 정원 ' + esc(c.cap) + ' · 승인 ' + approved + '</span></div>' +
           '<div class="row"><span class="badge red">취소 대상 ' + red + '</span><span class="badge amber">확인 필요 ' + amber + '</span></div>' +
+          (waiting.length ? '<button class="btn sm" data-go="wait" data-cls="' + go + '" title="전체 명단에서 이 반의 대기 신청만 봅니다">승인 대상(대기) ' + waiting.length + '명 · 이상 없음 ' + waitOk + (waiting.length - waitOk ? ' · 문제 ' + (waiting.length - waitOk) : '') + '</button>' : '<span class="muted small">승인 대상(대기) 없음</span>') +
+          (fresh ? '<button class="btn sm" data-go="new" data-cls="' + go + '">새로 들어옴 ' + fresh + '명</button>' : '') +
           '<div class="muted small">' + (c.lastAt ? '최종 업로드 ' + esc(c.lastAt.slice(5, 16)) + ' · ' + esc(c.lastBy) : '아직 올린 명단 없음') + '</div></article>';
       }).join('') + '</section>';
     });
@@ -434,8 +442,18 @@
       return '<span class="badge done">' + (r.status.s === 'ok' ? '문제없음' : '처리 완료') + '</span><div class="small muted">' + esc(r.status.who) + ' · ' + esc(r.status.at.slice(5, 16)) + '</div>' +
         (r.status.memo ? '<div class="small">' + esc(r.status.memo) + '</div>' : '') + '<button class="btn sm" data-undo="' + esc(r.no) + '">되돌리기</button>';
     }
-    return '<div class="row" style="gap:6px"><input type="text" class="memo" id="memo-' + esc(r.no) + '" placeholder="메모" aria-label="메모">' +
+    return '<div class="row" style="gap:6px"><input type="text" class="memo" placeholder="메모" aria-label="메모">' +
       '<button class="btn sm primary" data-done="' + esc(r.no) + '">완료</button><button class="btn sm" data-ok="' + esc(r.no) + '">문제없음</button></div>';
+  }
+
+  /* 휴대폰용 신청 카드 */
+  function mobileCard(r) {
+    var c = r.cells;
+    return '<div class="mcard"><div class="row">' + issueBadges(r) + (r.changed ? '<span class="badge warn">내용 변경됨</span>' : '') + '</div>' +
+      '<div><b style="font-size:16px">' + esc(c[9]) + '</b> · ' + esc(c[10]) + ' · ' + esc(c[11]) + '</div>' +
+      '<div class="small muted">' + esc(r.cls) + ' · ' + esc(c[12]) + ' · 신청번호 ' + esc(c[0]) + '</div>' +
+      '<div class="small">신청자 ' + esc(c[2]) + ' · <a href="tel:' + esc(c[3].replace(/[^0-9]/g, '')) + '">' + esc(c[3]) + '</a></div>' +
+      '<div class="small">' + issueDetail(r) + '</div>' + actionCell(r) + '</div>';
   }
 
   function viewReview() {
@@ -451,9 +469,10 @@
     sections.forEach(function (s) {
       html += '<section class="card" style="overflow:hidden"><div class="sec-head ' + s[0] + '"><span class="badge ' + s[0] + '">' + s[1] + ' ' + s[3].length + '건</span><span class="small">' + s[2] + '</span></div>';
       if (!s[3].length) { html += '<div class="pad muted small">없습니다.</div></section>'; return; }
-      html += '<div class="tbox"><table class="grid"><thead><tr>' + head + '</tr></thead><tbody>' + s[3].map(function (r) {
+      html += '<div class="tbox only-desk"><table class="grid"><thead><tr>' + head + '</tr></thead><tbody>' + s[3].map(function (r) {
         return '<tr>' + dataCells(r, cols, null) + '<td class="chk">' + issueBadges(r) + (r.changed ? ' <span class="badge warn">내용 변경됨</span>' : '') + '</td><td style="min-width:220px">' + issueDetail(r) + '</td><td style="min-width:230px">' + actionCell(r) + '</td></tr>';
-      }).join('') + '</tbody></table></div></section>';
+      }).join('') + '</tbody></table></div>';
+      html += '<div class="only-mobile">' + s[3].map(mobileCard).join('') + '</div></section>';
     });
     return html;
   }
@@ -465,49 +484,123 @@
     var q = S.query.trim();
     var colgroup = '<colgroup>' + cols.map(function (i) { return '<col style="width:' + WIDTH[i] + 'px">'; }).join('') + '<col style="width:210px"><col style="width:110px"></colgroup>';
     var total = cols.reduce(function (a, i) { return a + WIDTH[i]; }, 0) + 320;
-    var head = cols.map(function (i) { return '<th>' + esc(H[i]) + '</th>'; }).join('') + '<th class="chk">점검결과</th><th>처리</th>';
+    var mark = function (k) { return S.sort.col === k ? (S.sort.dir > 0 ? ' ▲' : ' ▼') : ''; };
+    var head = cols.map(function (i) { return '<th><button class="sorth" data-sort="' + i + '" title="눌러서 정렬 (오름차순 → 내림차순 → 원래 순서)">' + esc(H[i]) + mark(String(i)) + '</button></th>'; }).join('') +
+      '<th class="chk"><button class="sorth" data-sort="result">점검결과' + mark('result') + '</button></th><th>처리</th>';
     var body = '';
+    var shownTotal = 0;
     ['오전', '오후'].forEach(function (t) {
-      S.data.classes.filter(function (c) { return c['시간대'] === t; }).forEach(function (c) {
-        var rows = S.data.rows.filter(function (r) { return r.cls === c['접수명']; })
-          .sort(function (a, b) { return (a.cancelled - b.cancelled) || (a.seq - b.seq); });
+      S.data.classes.filter(function (c) { return c['시간대'] === t && (!S.f.cls || c['접수명'] === S.f.cls); }).forEach(function (c) {
+        var rows = sortRows(S.data.rows.filter(function (r) { return r.cls === c['접수명']; }));
         var live = rows.filter(function (r) { return !r.cancelled; });
         var by = {};
         rows.forEach(function (r) { var k = r.cells[12] || '-'; by[k] = (by[k] || 0) + 1; });
         var stat = Object.keys(by).map(function (k) { return k + ' ' + by[k]; }).join(' · ');
+        var allCount = rows.length;
         if (q) rows = rows.filter(function (r) { return [r.cells[9], r.cells[2], r.cells[3]].join(' ').indexOf(q) >= 0; });
+        rows = rows.filter(passFilter);
+        shownTotal += rows.length;
         body += '<tr class="group"><td colspan="' + (cols.length + 2) + '">' + t + ' · ' + esc(c['접수명']) + ' <span class="muted small" style="font-weight:400">신청 ' + live.length + ' / 정원 ' + esc(c.cap) + (stat ? ' · ' + esc(stat) : '') +
-          ' · ' + (c.lastAt ? '최종 업로드 ' + esc(c.lastAt.slice(5, 16)) + ' ' + esc(c.lastBy) : '아직 올린 명단 없음') + '</span></td></tr>';
+          ' · ' + (c.lastAt ? '최종 업로드 ' + esc(c.lastAt.slice(5, 16)) + ' ' + esc(c.lastBy) : '아직 올린 명단 없음') + (rows.length !== allCount ? ' · <b>표시 ' + rows.length + '명</b>' : '') + '</span></td></tr>';
         rows.forEach(function (r) {
           var active = !r.cancelled && r.level && !r.status;
           var hl = {};
           if (active) r.issues.forEach(function (i) { i.cells.forEach(function (ci) { if (!hl[ci] || i.level === 'red') hl[ci] = 'hl-' + i.level; }); });
           var trc = r.cancelled ? 'cancel' : (active ? 'lv-' + r.level : '');
           var result = r.cancelled ? '예약취소 · 점검 제외' : (r.issues.length ? r.issues.map(function (i) { return i.label; }).filter(function (x, k, a) { return a.indexOf(x) === k; }).join(', ') : '');
+          var resultHtml = (r.isNew ? '<span class="badge new">새로 들어옴</span> ' : '') + (!r.cancelled && !r.issues.length ? '<span class="badge ok">이상 없음</span>' : '<b>' + esc(result) + '</b>');
           var act = active ? '<button class="btn sm" data-expand="' + esc(r.no) + '">' + (S.open === r.no ? '닫기' : '처리') + '</button>' :
             (r.status ? '<span class="small muted">' + (r.status.s === 'ok' ? '문제없음' : '완료') + ' · ' + esc(r.status.who) + '</span>' : '');
-          body += '<tr class="' + trc + '">' + dataCells(r, cols, hl) + '<td class="chk" title="' + esc(r.issues.map(function (i) { return i.detail; }).join(' / ')) + '"><b>' + esc(result) + '</b></td><td>' + act + '</td></tr>';
+          body += '<tr class="' + trc + '">' + dataCells(r, cols, hl) + '<td class="chk" title="' + esc(r.issues.map(function (i) { return i.detail; }).join(' / ')) + '">' + resultHtml + '</td><td>' + act + '</td></tr>';
           if (active && S.open === r.no) {
             body += '<tr class="expand"><td colspan="' + (cols.length + 2) + '"><div class="row">' + issueBadges(r) + '<span>' + issueDetail(r) + '</span>' + actionCell(r) + '</div></td></tr>';
           }
         });
       });
     });
+    if (!shownTotal && (q || filterOn())) body += '<tr><td colspan="' + (cols.length + 2) + '" class="muted" style="padding:16px">조건에 맞는 신청이 없습니다.</td></tr>';
     return '<div class="tbox tall"><table class="grid fixed" style="min-width:' + total + 'px">' + colgroup + '<thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>';
+  }
+
+  /* ───────── 정렬·빠른 필터 ───────── */
+
+  function resultCat(r) {
+    if (r.cancelled) return 'cancel';
+    if (r.status) return 'done';
+    if (r.level === 'red') return 'red';
+    if (r.level === 'amber') return 'amber';
+    return 'clean';
+  }
+  function filterOn() { return S.f.result.length || S.f.state.length || S.f.isNew || S.f.cls; }
+  function passFilter(r) {
+    if (S.f.result.length && S.f.result.indexOf(resultCat(r)) < 0) return false;
+    if (S.f.state.length && S.f.state.indexOf(r.cells[12]) < 0) return false;
+    if (S.f.isNew && !r.isNew) return false;
+    return true;
+  }
+  var RANK = { red: 0, amber: 1, done: 2, clean: 3, cancel: 4 };
+  function sortKey(r, col) {
+    if (col === 'result') return RANK[resultCat(r)];
+    var v = r.cells[+col] || '';
+    if (col === '0') return +v || 0;
+    if (col === '10') return Core.schoolKey(v) + '\u0001' + v;
+    if (col === '11') { var m = /(\d)/.exec(v); return m ? +m[1] : 99; }
+    return v;
+  }
+  function sortRows(rows) {
+    var col = S.sort.col, dir = S.sort.dir;
+    return rows.slice().sort(function (a, b) {
+      if (col !== null && dir) {
+        var x = sortKey(a, col), y = sortKey(b, col);
+        var c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'ko');
+        if (c) return c * dir;
+      }
+      return (a.cancelled - b.cancelled) || (a.seq - b.seq);
+    });
+  }
+  function saveView() {
+    try { localStorage.setItem('full-view', JSON.stringify({ f: { result: S.f.result, state: S.f.state, isNew: S.f.isNew }, sort: S.sort })); } catch (e) { /* 무시 */ }
+  }
+  function restoreView() {
+    try {
+      var v = JSON.parse(localStorage.getItem('full-view') || 'null');
+      if (v) { S.f.result = v.f.result || []; S.f.state = v.f.state || []; S.f.isNew = !!v.f.isNew; S.sort = v.sort || S.sort; }
+    } catch (e) { /* 무시 */ }
+  }
+  function chip(group, value, label, tipText) {
+    var on = group === 'isNew' ? S.f.isNew : S.f[group].indexOf(value) >= 0;
+    return '<button class="fchip' + (on ? ' on' : '') + '" data-fq="' + group + ':' + value + '" aria-pressed="' + on + '"' + (tipText ? ' title="' + esc(tipText) + '"' : '') + '>' + label + '</button>';
+  }
+  function filterBar() {
+    var opts = '<option value="">전체 반</option>' + S.data.classes.map(function (c) {
+      return '<option value="' + esc(c['접수명']) + '"' + (S.f.cls === c['접수명'] ? ' selected' : '') + '>' + esc(c['시간대'] + ' · ' + c['접수명']) + '</option>';
+    }).join('');
+    return '<div class="row small" style="gap:6px">' +
+      '<span class="muted">점검결과</span>' + chip('result', 'red', '취소 대상') + chip('result', 'amber', '확인 필요') + chip('result', 'clean', '이상 없음') + chip('result', 'done', '처리 완료') +
+      '<span class="muted" style="margin-left:8px">대기여부</span>' + chip('state', '승인', '승인') + chip('state', '대기', '대기') + chip('state', '추가대기', '추가대기') + chip('state', '예약취소', '예약취소') +
+      '<span style="margin-left:8px"></span>' + chip('isNew', '1', '새로 들어옴', '가장 최근 업로드에서 처음 나타난 신청') +
+      '<select id="fcls" aria-label="반 고르기" style="margin-left:8px">' + opts + '</select>' +
+      ((filterOn() || S.sort.dir) ? '<button class="btn sm" data-act="clear-filter">필터·정렬 모두 해제</button>' : '') + '</div>';
   }
 
   function viewFull() {
     return '<section class="card pad row between"><div class="row">' + roundSelect() +
       '<input type="search" id="q" value="' + esc(S.query) + '" placeholder="학생명 · 신청자명 · 연락처" aria-label="검색" style="width:220px">' + colsToolbar() + '</div>' +
-      '<div class="row small muted"><span class="badge" style="background:var(--red-bg);color:var(--red)">취소 대상</span><span class="badge" style="background:var(--amber-bg);color:var(--amber)">확인 필요</span><span class="badge" style="background:var(--red-cell);color:#fff">문제 칸</span><span>정렬: 원본 엑셀 순서</span></div></section>' +
+      '<div class="row small muted"><span class="badge" style="background:var(--red-bg);color:var(--red)">취소 대상</span><span class="badge" style="background:var(--amber-bg);color:var(--amber)">확인 필요</span><span class="badge" style="background:var(--red-cell);color:#fff">문제 칸</span>' + tip('열 제목을 누르면 반 안에서 정렬됩니다 (오름차순 → 내림차순 → 원래 엑셀 순서). 학교명은 앞 두 글자, 학반은 학년 숫자 기준입니다. 아래 버튼으로 원하는 신청만 골라 볼 수 있고, 같은 줄의 버튼은 하나라도 맞으면 보입니다.') + '</div>' +
+      '<div id="fbar" style="flex-basis:100%">' + filterBar() + '</div></section>' +
       '<section class="card" id="full-table" style="overflow:hidden">' + fullTableHtml() + '</section>';
   }
 
   /* 검색: 입력칸은 그대로 두고 표만 다시 그립니다 (한글 조합 중에는 기다림) */
   function applySearch(value) {
     S.query = value;
+    refreshFull();
+  }
+  function refreshFull() {
     var box = document.getElementById('full-table');
     if (box) box.innerHTML = fullTableHtml();
+    var bar = document.getElementById('fbar');
+    if (bar) bar.innerHTML = filterBar();
   }
 
   function viewUploads() {
@@ -558,11 +651,32 @@
   /* ───────── 이벤트 ───────── */
 
   root.addEventListener('click', function (e) {
-    var t = e.target.closest('[data-view],[data-act],[data-done],[data-ok],[data-undo],[data-expand]');
+    var t = e.target.closest('[data-view],[data-act],[data-done],[data-ok],[data-undo],[data-expand],[data-sort],[data-fq],[data-go]');
     if (!t) return;
     if (t.hasAttribute('data-view')) { S.view = t.getAttribute('data-view'); if (S.view === 'settings') S.settings = null; render(); window.scrollTo(0, 0); return; }
-    if (t.hasAttribute('data-done')) return setStatus(t.getAttribute('data-done'), 'done');
-    if (t.hasAttribute('data-ok')) return setStatus(t.getAttribute('data-ok'), 'ok');
+    if (t.hasAttribute('data-sort')) {
+      var col = t.getAttribute('data-sort');
+      if (S.sort.col !== col) S.sort = { col: col, dir: 1 };
+      else if (S.sort.dir === 1) S.sort.dir = -1;
+      else S.sort = { col: null, dir: 0 };
+      saveView(); refreshFull(); return;
+    }
+    if (t.hasAttribute('data-fq')) {
+      var fq = t.getAttribute('data-fq').split(':');
+      if (fq[0] === 'isNew') S.f.isNew = !S.f.isNew;
+      else { var arr = S.f[fq[0]], k = arr.indexOf(fq[1]); if (k >= 0) arr.splice(k, 1); else arr.push(fq[1]); }
+      saveView(); refreshFull(); return;
+    }
+    if (t.hasAttribute('data-go')) {
+      var kind = t.getAttribute('data-go');
+      S.f = { result: [], state: kind === 'wait' ? ['대기'] : [], isNew: kind === 'new', cls: t.getAttribute('data-cls') };
+      S.sort = { col: null, dir: 0 }; S.query = '';
+      S.view = 'full'; render(); window.scrollTo(0, 0); return;
+    }
+    // 메모는 누른 버튼과 같은 줄(또는 카드)의 입력칸에서 읽습니다 (PC 표와 휴대폰 카드가 함께 있으므로)
+    var memoOf = function () { var box = t.closest('tr, .mcard, .row'); var m = box && box.querySelector('.memo'); return m ? m.value : ''; };
+    if (t.hasAttribute('data-done')) return setStatus(t.getAttribute('data-done'), 'done', memoOf());
+    if (t.hasAttribute('data-ok')) return setStatus(t.getAttribute('data-ok'), 'ok', memoOf());
     if (t.hasAttribute('data-undo')) return setStatus(t.getAttribute('data-undo'), null);
     if (t.hasAttribute('data-expand')) { var no = t.getAttribute('data-expand'); S.open = S.open === no ? null : no; render(); return; }
     var act = t.getAttribute('data-act');
@@ -572,6 +686,7 @@
     else if (act === 'refresh') { S.settings = null; checkVersion(); load(S.date).then(function () { toast('최신 내용으로 새로고침했습니다.', 2000); }); }
     else if (act === 'update') { location.replace(location.pathname + '?v=' + Date.now()); }
     else if (act === 'close-result') { S.lastUpload = null; render(); }
+    else if (act === 'clear-filter') { S.f = { result: [], state: [], isNew: false, cls: '' }; S.sort = { col: null, dir: 0 }; saveView(); refreshFull(); }
     else if (act === 'reload-settings') { S.settings = null; render(); }
     else if (act === 'neis') {
       setBusy(true);
@@ -583,6 +698,7 @@
   root.addEventListener('change', function (e) {
     if (e.target.id === 'round') { S.lastUpload = null; load(e.target.value); }
     else if (e.target.getAttribute('data-act') === 'cols') { S.showAll = e.target.checked; render(); }
+    else if (e.target.id === 'fcls') { S.f.cls = e.target.value; refreshFull(); }
     else if (e.target.id === 'pick') { uploadFromFiles(e.target.files); e.target.value = ''; }
   });
 

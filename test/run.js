@@ -110,11 +110,21 @@ ok(summary.length > 1 && summary[0][0] === '수업일', '점검현황 탭');
 const fixed = JSON.parse(JSON.stringify(files.explore));
 fixed.name = '통합예약신청자목록 - 2026-11-04T090000.000.xls';
 fixed.rows[2][2] = '한엄마';
-env.setNow(new Date('2026-11-04T09:30:00+09:00'));
+env.setNow(new Date('2026-11-04T10:30:00+09:00'));
 res = env.call('upload', { date: '2026-11-07', files: [load(fixed)] });
 ok(res.results[0].result === '반영', '탐험 새 명단 반영');
 res = env.call('state', { date: '2026-11-07' });
 ok(!row('251210').issues.length && !row('251210').status, '학부모 이름으로 고치면 문제 없어짐');
+ok(!row('251204').isNew && !row('251188').isNew, '이전부터 있던 신청은 새로 들어옴 아님');
+// 탐험에 새 신청 1건 추가해서 다시 올리기
+const more = JSON.parse(JSON.stringify(fixed));
+more.name = '통합예약신청자목록 - 2026-11-04T093500.000.xls';
+more.rows.push(['251300', more.rows[0][1], '새엄마', '010-0000-1300', '', '개인', '', '', '', '새학생', '새솔초', '4-2', '대기', 'fake_new']);
+env.setNow(new Date('2026-11-04T10:40:00+09:00'));
+env.call('upload', { date: '2026-11-07', files: [load(more)] });
+res = env.call('state', { date: '2026-11-07' });
+ok(row('251300').isNew && !row('251210').isNew, '새로 들어온 신청만 표시: ' + row('251300').isNew);
+ok(!row('251245').isNew, '다른 반(기초)은 새로 들어옴 아님');
 
 // 되돌리기
 st = env.call('status', { date: '2026-11-07', no: '251230', status: 'ok', memo: '', prevAt: '' });

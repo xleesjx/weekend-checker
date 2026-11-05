@@ -9,7 +9,7 @@ var SHEET = {
   LIST: '통합명단', SUMMARY: '점검현황', STATUS: '처리기록', UPLOADS: '업로드기록', RESTRICT: '신청제한',
   DATES: '설정_수업일', CLASSES: '설정_반', SCHOOLS: '설정_학교', MAP: '예약명연결', USERS: '점검자'
 };
-var EXTRA = ['수업일', '시간대', '수업반', '접수명', '점검결과', '처리상태', '처리자', '처리시각', '메모', '업로드시각', '업로더', '파일명', '순번'];
+var EXTRA = ['수업일', '시간대', '수업반', '접수명', '점검결과', '처리상태', '처리자', '처리시각', '메모', '업로드시각', '업로더', '파일명', '순번', '처음 올라온 시각'];
 var LIST_HEADER, X, HEADERS;
 
 /** Core.gs 를 쓰는 값은 파일 순서와 상관없이 처음 호출될 때 만듭니다. */
@@ -198,7 +198,7 @@ function roundView_(ctx, date, list, statuses) {
   list.forEach(function (r, i) {
     if (!Core.instanceCovers(r[X['수업일']], date)) return;
     var cls = byName[r[X['접수명']]] || ctx.classes.filter(function (c) { return c['접수명'] === r[X['접수명']]; })[0] || null;
-    rows.push({ idx: i, no: r[0], row: r.slice(0, Core.HEADER.length), cls: cls, inst: r[X['수업일']], seq: +r[X['순번']] || 0 });
+    rows.push({ idx: i, no: r[0], row: r.slice(0, Core.HEADER.length), cls: cls, inst: r[X['수업일']], seq: +r[X['순번']] || 0, firstSeen: r[X['처음 올라온 시각']] || '' });
   });
   var result = Core.analyzeRound(rows, ctx, date);
   rows.forEach(function (e) {
@@ -304,9 +304,19 @@ API.state = function (req, user) {
     return { '시간대': c['시간대'], '수업반': c['수업반'], '접수명': c['접수명'], rangeText: c.rangeText, cap: c.cap, order: c.order,
       lastAt: last ? last[0] : '', lastBy: last ? last[1] : '', lastFile: last ? last[2] : '' };
   });
+  // 새로 들어옴: 이 반의 첫 업로드가 아니고, 가장 최근 업로드에서 처음 나타난 신청
+  var upAt = {};
+  uploads.forEach(function (u) {
+    if (!/^반영/.test(u[7]) || !Core.instanceCovers(u[4], date)) return;
+    var k = u[4] + '|' + u[5];
+    var o = upAt[k] || (upAt[k] = { first: u[0], last: u[0] });
+    if (u[0] < o.first) o.first = u[0];
+    if (u[0] > o.last) o.last = u[0];
+  });
   out.rows = view.rows.map(function (e) {
     return { no: e.no, cells: e.row, cls: e.cls ? e.cls['접수명'] : '', inst: e.inst, seq: e.seq, issues: e.issues, level: e.level,
-      cancelled: e.cancelled, status: e.status ? { s: e.status.s, who: e.status.who, at: e.status.at, memo: e.status.memo } : null, changed: e.changed };
+      cancelled: e.cancelled, status: e.status ? { s: e.status.s, who: e.status.who, at: e.status.at, memo: e.status.memo } : null, changed: e.changed,
+      isNew: (function () { var o = upAt[e.inst + '|' + (e.cls ? e.cls['접수명'] : '')]; return !!(o && e.firstSeen && o.first !== o.last && e.firstSeen === o.last); })() };
   });
   var from = Core.addDays(date, -Core.WINDOW_DAYS);
   out.uploads = uploads.filter(function (u) { return Core.instanceCovers(u[4], date) || (u[3] >= from && u[3] <= date + 'T99'); })
@@ -370,12 +380,15 @@ API.upload = function (req, user) {
       uploads.forEach(function (u) { if (u[4] === inst && u[5] === cls['접수명'] && /^반영/.test(u[7]) && (!prev || u[3] > prev[3])) prev = u; });
       if (prev && meta.ts <= prev[3]) { res.result = '건너뜀'; res.detail = '이미 더 최근 명단(' + prev[3].slice(11, 16) + ' 받은 파일)이 올라가 있음'; return; }
 
+      var seenBefore = {};
+      list.forEach(function (r) { if (r[X['수업일']] === inst && r[X['접수명']] === cls['접수명']) seenBefore[r[0]] = r[X['처음 올라온 시각']] || r[X['업로드시각']]; });
       list = list.filter(function (r) { return !(r[X['수업일']] === inst && r[X['접수명']] === cls['접수명']); });
       f.rows.forEach(function (cells, i) {
         var r = [];
         for (var k = 0; k < Core.HEADER.length; k++) r.push(Core.str(cells[k]));
         r[X['수업일']] = inst; r[X['시간대']] = cls['시간대']; r[X['수업반']] = cls['수업반']; r[X['접수명']] = cls['접수명'];
         r[X['업로드시각']] = at; r[X['업로더']] = user.name; r[X['파일명']] = f.fileName; r[X['순번']] = String(i + 1);
+        r[X['처음 올라온 시각']] = seenBefore[r[0]] || at;
         for (var j = 0; j < LIST_HEADER.length; j++) if (r[j] === undefined) r[j] = '';
         list.push(r);
       });

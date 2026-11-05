@@ -62,8 +62,12 @@ const server = http.createServer((req, res) => {
   await page.screenshot({ path: path.join(OUT, '0-upload.png') });
   await page.click('[data-view=review]');
   await page.screenshot({ path: path.join(OUT, '2-review.png'), fullPage: true });
-  await page.click('[data-done="251210"]');
+  const memoBox = page.locator('[data-done="251210"]:visible').locator('xpath=..').locator('.memo');
+  await memoBox.fill('통화함');
+  await page.locator('[data-done="251210"]:visible').click();
   await page.waitForFunction(() => !document.querySelector('[data-done="251210"]'));
+  const memoSaved = await page.evaluate(() => document.body.textContent.includes('통화함'));
+  if (!memoSaved) throw new Error('메모가 저장되지 않음');
   await page.click('[data-view=full]');
   await page.click('[data-expand="251240"]');
   await page.screenshot({ path: path.join(OUT, '3-full.png'), fullPage: false });
@@ -75,6 +79,21 @@ const server = http.createServer((req, res) => {
   const qv = await page.$eval('#q', (e) => e.value);
   const focused = await page.evaluate(() => document.activeElement && document.activeElement.id);
   if (qv !== '김하늘' || focused !== 'q') throw new Error('검색칸 값/포커스 유지 실패: ' + qv + ' ' + focused);
+  // 정렬·빠른 필터
+  await page.fill('#q', '');
+  await page.click('[data-sort="9"]');
+  await page.click('[data-fq="result:red"]');
+  const reds = await page.$$eval('table.fixed tbody tr:not(.group):not(.expand)', (rs) => rs.map((r) => r.className));
+  if (!reds.length || reds.some((c) => c !== 'lv-red')) throw new Error('취소 대상 필터 실패: ' + reds.join(','));
+  await page.screenshot({ path: path.join(OUT, '3b-filter.png') });
+  await page.click('[data-act=clear-filter]');
+  // 홈 카드 → 승인 대상(대기)
+  await page.click('[data-view=home]');
+  await page.click('[data-go=wait]');
+  const states = await page.$$eval('table.fixed tbody tr:not(.group):not(.expand)', (rs) => rs.map((r) => r.children[8] && r.children[8].textContent));
+  if (!states.length || states.some((v) => v !== '대기')) throw new Error('대기 필터 실패: ' + states.join(','));
+  await page.screenshot({ path: path.join(OUT, '3c-wait.png') });
+  await page.click('[data-act=clear-filter]');
   await page.click('[data-view=settings]');
   await page.waitForSelector('text=수업일');
   await page.screenshot({ path: path.join(OUT, '4-settings.png'), fullPage: true });
