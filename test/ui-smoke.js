@@ -37,7 +37,7 @@ const server = http.createServer((req, res) => {
   await new Promise((r) => server.listen(0, r));
   const port = server.address().port;
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: +(process.env.VW || 1360), height: +(process.env.VH || 900) } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const payload = Buffer.from(JSON.stringify({ email: 'owner@example.com', name: '이승주', exp: Math.floor(Date.now() / 1000) + 3000 })).toString('base64url');
