@@ -32,6 +32,15 @@ function codes(row) { return row.issues.map((i) => i.code).sort().join(','); }
     ok(!a['1'].issues.length, sc + ' → 관내·중1 정상: ' + a['1'].issues.map((i) => i.label).join(','));
   });
   ok(!!ridx['중앙'], '학교 목록 색인');
+  // 출석부로 옮길 때 걸리는 것도 점검 목록에서 미리 확인 필요로
+  const sch2 = [{ name: '가온초등학교', level: '초' }, { name: '가온중학교', level: '중' }, { name: '해솔초등학교', level: '초' }];
+  const chk = (school, ban) => Core.analyzeRound([{ no: '1', row: ['1', 't', '부모', '010', '', '개인', '', '', '', '학생', school, ban, '대기', 'id'], cls: { 시간대: '오전', 수업반: 'x', 접수명: 'x', range: { min: 1, max: 9 } } }], { schools: sch2 }, '2026-11-07')['1'].issues.map((i) => i.detail);
+  ok(chk('가온', '3-2').some((d) => /정식 이름.*가온초등학교 \/ 가온중학교/.test(d)), '학교급 없이 줄여 쓴 학교명: ' + chk('가온', '3-2'));
+  ok(chk('해솔', '3-2').some((d) => /정식 이름/.test(d)), '후보 하나라도 학교급이 없으면 확인');
+  ok(!chk('해솔초', '3-2').length && !chk('가온초등학교', '3학년 2반').length && !chk('해솔초', '32').length && !chk('해솔초', '3').length, '정상 학교명·학반은 통과');
+  ok(chk('해솔초', '1-!').some((d) => /학반 형식/.test(d)), '1-! 학반 형식');
+  ok(chk('해솔초', '60407').some((d) => /학반 형식/.test(d)), '60407 학반 형식');
+  ok(chk('해솔초', '0-3').length === 1, '학년 오류와 학반 형식은 한 번만');
   const g = Core.parseGradeRange('초2~3학년');
   ok(g.min === 2 && g.max === 3, '학년 범위');
   ok(Core.nextClassDate([{ date: '2026-10-31' }, { date: '2026-11-07' }, { date: '2026-11-28' }], '2026-11-07') === '2026-11-28', '휴강 뒤 다음 수업일');

@@ -9,35 +9,9 @@ var Roster = (function () {
 
   function norm(s) { return str(s).replace(/\s+/g, ''); }
 
-  /** 학부모가 쓴 학교명 → 학교 목록의 정식 이름. 하나로 정해지지 않으면 ok:false */
-  function officialSchool(raw, schools) {
-    var t = norm(raw);
-    if (!t) return { name: '', ok: false };
-    var exact = (schools || []).filter(function (s) { return norm(s.name) === t; });
-    if (exact.length) return { name: exact[0].name, ok: true };
-    var key = Core.schoolKey(t);
-    var lv = Core.schoolLevel(t);
-    var cands = (schools || []).filter(function (s) {
-      if (Core.schoolKey(s.name) !== key) return false;
-      if (!lv) return true;
-      var sl = s.level || Core.schoolLevel(s.name);
-      return sl === lv;
-    });
-    if (cands.length === 1) return { name: cands[0].name, ok: true };
-    return { name: str(raw), ok: false, cands: cands.map(function (s) { return s.name; }) };
-  }
-
-  /** 학반 → '3-2'. 반이 없으면 1반 */
-  function normalizeBan(raw) {
-    var t = str(raw).replace(/^(초등?|중학?|초|중)\s*/, '');
-    var m = /^(\d)\s*학년\s*(\d{1,2})\s*반?/.exec(t) ||
-      /^(\d)\s*[-ㅡ—–.~_/,·\s]\s*(\d{1,2})\s*반?$/.exec(t) ||
-      /^(\d)(\d{1,2})$/.exec(t);
-    if (m) return { ban: m[1] + '-' + (+m[2]), ok: true };
-    m = /^(\d)\s*(학년)?$/.exec(t);
-    if (m) return { ban: m[1] + '-1', ok: true };
-    return { ban: str(raw), ok: false };
-  }
+  /* 학교명·학반 정리는 점검 목록과 같은 기준을 쓰도록 Core에 있습니다 */
+  var officialSchool = Core.officialSchool;
+  var normalizeBan = Core.normalizeBan;
 
   function byKo(a, b) { return a < b ? -1 : (a > b ? 1 : 0); }
   function sortStudents(list) {

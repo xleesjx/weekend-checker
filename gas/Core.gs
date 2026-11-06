@@ -170,6 +170,36 @@ var Core = (function () {
     return idx;
   }
 
+  /** 학부모가 쓴 학교명 → 학교 목록의 정식 이름. 하나로 정해지지 않으면 ok:false (출석부와 점검 목록이 같이 씀) */
+  function officialSchool(raw, schools) {
+    var t = normSchool(raw);
+    if (!t) return { name: '', ok: false, cands: [] };
+    var exact = (schools || []).filter(function (s) { return normSchool(s.name) === t; });
+    if (exact.length) return { name: exact[0].name, ok: true };
+    var key = schoolKey(t);
+    var lv = schoolLevel(t);
+    var cands = (schools || []).filter(function (s) {
+      if (schoolKey(s.name) !== key) return false;
+      if (!lv) return true;
+      return (s.level || schoolLevel(s.name)) === lv;
+    });
+    // 학교급(초·중) 없이 줄여 쓴 이름은 후보가 하나여도 확인 필요 (예: '옥동')
+    if (cands.length === 1 && lv) return { name: cands[0].name, ok: true };
+    return { name: str(raw), ok: false, cands: cands.map(function (s) { return s.name; }) };
+  }
+
+  /** 학반 → '3-2'. 반이 없으면 1반. 형식을 알 수 없으면 ok:false */
+  function normalizeBan(raw) {
+    var t = str(raw).replace(/^(초등?|중학?|초|중)\s*/, '');
+    var m = /^(\d)\s*학년\s*(\d{1,2})\s*반?$/.exec(t) ||
+      /^(\d)\s*[-ㅡ—–.~_/,·\s]\s*(\d{1,2})\s*반?$/.exec(t) ||
+      /^(\d)(\d{1,2})$/.exec(t);
+    if (m && +m[2] >= 1) return { ban: m[1] + '-' + (+m[2]), ok: true };
+    m = /^(\d)\s*(학년)?$/.exec(t);
+    if (m) return { ban: m[1] + '-1', ok: true };
+    return { ban: str(raw), ok: false };
+  }
+
   function looksLikeSchool(s, idx) {
     var t = normSchool(s);
     if (t.length < 2) return false;
@@ -286,6 +316,16 @@ var Core = (function () {
           addIssue(issues, 'INPUT', '학반에서 학년을 알 수 없음' + (it.grade ? ' (적힌 그대로: ' + it.grade + ')' : ''), [C['학반']]);
         }
 
+        // 출석부에 그대로 옮길 수 있는지 (학교 정식 이름·학반 형식) — 원본을 고쳐 두면 매주 다시 걸리지 않습니다
+        var hasInput = function (col) { return issues.some(function (x) { return (x.code === 'INPUT' || x.code === 'OUTSIDE') && x.cells.indexOf(col) >= 0; }); };
+        if (it.school && !it.home && idx[key] && !hasInput(C['학교명'])) {
+          var off = officialSchool(it.school, ctx.schools);
+          if (!off.ok) addIssue(issues, 'INPUT', '학교명을 정식 이름으로 (적힌 그대로: ' + it.school + (off.cands && off.cands.length ? ' → ' + off.cands.join(' / ') + ' 중 하나' : '') + ')', [C['학교명']]);
+        }
+        if (it.grade && !hasInput(C['학반']) && !normalizeBan(it.grade).ok) {
+          addIssue(issues, 'INPUT', '학반 형식 확인 (적힌 그대로: ' + it.grade + ' → 예: 3-2)', [C['학반']]);
+        }
+
         // 신청 제한
         restrictions.forEach(function (rs) {
           if (str(rs.name) === it.name && schoolKey(rs.school) === key && it.name) {
@@ -389,6 +429,7 @@ var Core = (function () {
     isListFile: isListFile, tsFromMillis: tsFromMillis, fileStamp: fileStamp, validTs: validTs,
     parseGradeRange: parseGradeRange, gradeLabel: gradeLabel, rangeLabel: rangeLabel, parseTitle: parseTitle,
     schoolKey: schoolKey, schoolLevel: schoolLevel, buildSchoolIndex: buildSchoolIndex, interpret: interpret,
+    officialSchool: officialSchool, normalizeBan: normalizeBan,
     analyzeRound: analyzeRound, fingerprint: fingerprint, currentRound: currentRound, roundNumber: roundNumber,
     activeClasses: activeClasses, resolveClass: resolveClass, instanceKey: instanceKey, instanceCovers: instanceCovers,
     nextClassDate: nextClassDate
