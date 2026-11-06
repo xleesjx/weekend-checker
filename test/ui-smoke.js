@@ -21,6 +21,13 @@ const maps = {};
 env.call('upload', { date: '2026-11-07', files: [files.c1, files.c2].map(load) }).needMap.forEach((n) => { maps[n.key] = /초1학년/.test(n.title) ? '창의 1,2반 [1학년]' : '창의 1,2반 [2~3학년]'; });
 env.call('upload', { date: '2026-11-07', files: [files.c1, files.c2].map(load), mappings: maps });
 env.call('status', { date: '2026-11-07', no: '251230', status: 'done', memo: '통화 후 취소', prevAt: '' });
+// 출석부 시험용: 기초 1,2반에 승인 30명 (학교 여러 곳)
+const BT = '[초2~3학년]11월7일 주말SW교실 기초코딩 오전반';
+const SCH = ['가온초', '해솔초등학교', '새솔초', '다솜초등학교', '누리초', '하늘초', '바다초', '푸른초', '은빛초', '샛별초'];
+const big = [];
+for (let i = 0; i < 30; i++) big.push([String(260000 + i), BT, '부모' + i, '010-0000-' + (2000 + i), '', '개인', '', '', '', '학생' + String(i).padStart(2, '0'), SCH[i % 10], (2 + (i % 2)) + '-' + (1 + (i % 4)), i === 29 ? '예약취소' : '승인', 'id' + i]);
+env.call('upload', { date: '2026-11-07', files: [parseXls(toXls(big), '통합예약신청자목록 - 2026-11-04T090000.000.xls')] });
+env.topic.rows = [['날짜', '요일', '시간', '영역', '반', '소속', '강사명', '주제', '교구'], ['11/7', '토', '오전', 'SW', '기초1', '', '', 'AI 게임', '노트북 8대'], ['11/7', '토', '오전', 'SW', '기초2', '', '', '헬로메이플', '헬로메이플, 태블릿PC']];
 
 const WEB = path.join(__dirname, '..', 'docs');
 const server = http.createServer((req, res) => {
@@ -69,7 +76,7 @@ const server = http.createServer((req, res) => {
   const memoSaved = await page.evaluate(() => document.body.textContent.includes('통화함'));
   if (!memoSaved) throw new Error('메모가 저장되지 않음');
   await page.click('[data-view=full]');
-  await page.click('[data-expand="251240"]');
+  await page.click('[data-expand="251188"]');
   await page.screenshot({ path: path.join(OUT, '3-full.png'), fullPage: false });
   await page.fill('#q', '김하늘');
   await page.waitForTimeout(200);
@@ -90,10 +97,47 @@ const server = http.createServer((req, res) => {
   // 홈 카드 → 승인 대상(대기)
   await page.click('[data-view=home]');
   await page.click('[data-go=wait]');
-  const states = await page.$$eval('table.fixed tbody tr:not(.group):not(.expand)', (rs) => rs.map((r) => r.children[8] && r.children[8].textContent));
+  const states = await page.$$eval('table.fixed tbody tr:not(.group):not(.expand)', (rs) => rs.map((r) => r.children[9] && r.children[9].textContent));
   if (!states.length || states.some((v) => v !== '대기')) throw new Error('대기 필터 실패: ' + states.join(','));
   await page.screenshot({ path: path.join(OUT, '3c-wait.png') });
   await page.click('[data-act=clear-filter]');
+  page.on('dialog', (d) => d.accept());
+  // 같은 반 요청 묶기
+  await page.click('[data-view=full]');
+  await page.check('[data-sel="260000"]');
+  await page.check('[data-sel="260001"]');
+  await page.click('[data-x=sel-link]');
+  await page.click('[data-m=ok]');
+  await page.waitForSelector('.badge.link');
+  // 예약취소 → 결석 기록에 보관
+  await page.click('[data-keepabs="260029"]');
+  await page.waitForFunction(() => document.body.textContent.includes('결석 기록됨'));
+  // 전체 명단 원본 내려받기
+  const [rawDl] = await Promise.all([page.waitForEvent('download'), page.click('[data-act=raw-export]')]);
+  await rawDl.saveAs(path.join(OUT, 'raw.xlsx'));
+  // 결석 화면
+  await page.click('[data-view=abs]');
+  await page.click('[data-x=abs-reason][data-v="질병"]');
+  await page.waitForFunction(() => document.querySelector('.chipbtn.on') && document.querySelector('.chipbtn.on').textContent === '질병');
+  await page.screenshot({ path: path.join(OUT, '6-abs.png'), fullPage: true });
+  // 출석부
+  await page.click('[data-view=att]');
+  await page.click('[data-x=att-start]');
+  await page.click('[data-m=go]');
+  await page.waitForSelector('.part');
+  const parts = await page.$$eval('.part-head', (hs) => hs.map((h) => h.textContent));
+  console.log('분반:', parts.join(' | '));
+  await page.waitForFunction(() => /수업을 읽었습니다/.test(document.body.textContent));
+  await page.screenshot({ path: path.join(OUT, '7-att-draft.png'), fullPage: true });
+  await page.check('[data-xc=att-check]');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-save]')]);
+  await dl.saveAs(path.join(OUT, 'att1.xlsx'));
+  await page.waitForSelector('[data-x=att-cancel]');
+  await page.click('[data-x=att-cancel][data-i="0"][data-j="0"]');
+  const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-save2]')]);
+  await dl2.saveAs(path.join(OUT, 'att2.xlsx'));
+  await page.screenshot({ path: path.join(OUT, '8-att-saved.png'), fullPage: true });
+  console.log('내려받은 파일:', rawDl.suggestedFilename(), dl.suggestedFilename(), dl2.suggestedFilename());
   await page.click('[data-view=settings]');
   await page.waitForSelector('text=수업일');
   await page.screenshot({ path: path.join(OUT, '4-settings.png'), fullPage: true });

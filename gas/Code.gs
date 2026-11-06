@@ -1,14 +1,18 @@
 /*
  * 주말 신청 점검 — Apps Script (저장·점검 서버)
  * 구글 시트에 붙어 있는 스크립트입니다. 웹앱으로 배포하면 GitHub Pages 화면이 이 주소로 요청을 보냅니다.
- * 스크립트 속성: CLIENT_ID (구글 로그인 클라이언트 ID), NEIS_KEY (NEIS 인증키)
+ * 스크립트 속성: CLIENT_ID (구글 로그인 클라이언트 ID), NEIS_KEY (NEIS 인증키),
+ *   TOPIC_SHEET_ID · TOPIC_TAB (주제·교구 시트, 비우면 아래 기본값)
  */
 
 var TZ = 'Asia/Seoul';
 var SHEET = {
   LIST: '통합명단', SUMMARY: '점검현황', STATUS: '처리기록', UPLOADS: '업로드기록', RESTRICT: '신청제한',
-  DATES: '설정_수업일', CLASSES: '설정_반', SCHOOLS: '설정_학교', MAP: '예약명연결', USERS: '점검자'
+  DATES: '설정_수업일', CLASSES: '설정_반', SCHOOLS: '설정_학교', MAP: '예약명연결', USERS: '점검자',
+  LINKS: '같은반요청', ABS: '결석기록', ATT: '출석부'
 };
+var TOPIC_SHEET_DEFAULT = '165RlpeCfhR9Z4n_Qq2IoPMTXBlkSiUWZMyBBhO77MBw';
+var TOPIC_TAB_DEFAULT = '하반기';
 var EXTRA = ['수업일', '시간대', '수업반', '접수명', '점검결과', '처리상태', '처리자', '처리시각', '메모', '업로드시각', '업로더', '파일명', '순번', '처음 올라온 시각'];
 var LIST_HEADER, X, HEADERS;
 
@@ -29,6 +33,9 @@ function init_() {
   HEADERS[SHEET.SCHOOLS] = ['학교명', '학교급', '앞 두 글자'];
   HEADERS[SHEET.MAP] = ['예약명(날짜 제외)', '접수명', '등록자', '등록시각'];
   HEADERS[SHEET.USERS] = ['이메일', '이름'];
+  HEADERS[SHEET.LINKS] = ['묶음ID', '수업일', '범위', '신청일련번호', '학생명', '학교', '메모', '등록자', '등록시각'];
+  HEADERS[SHEET.ABS] = ['기록ID', '수업일', '신청일련번호', '학생명', '학교', '학반', '반', '연락처', '경로', '사유', '취소시각', '메모', '출석인정', '기록자', '기록시각'];
+  HEADERS[SHEET.ATT] = ['수업일', '차수', '저장시각', '저장자', '내용'];
 }
 
 /* ───────── 진입점 ───────── */
@@ -183,6 +190,11 @@ function loadCtx_() {
     var date = parseSheetDate_(r[4], year) || Core.nextClassDate(dates, absent);
     return { absent: absent, name: Core.str(r[1]), school: Core.str(r[2]), reason: Core.str(r[3]), date: date, memo: Core.str(r[5]) };
   }).filter(function (r) { return r.name; });
+  // 결석 기록 중 출석 인정이 아닌 것은 다음 수업일 신청 제한
+  readTable_(SHEET.ABS).rows.forEach(function (r) {
+    if (!r[3] || r[12] === 'Y') return;
+    restrictions.push({ absent: r[1], name: Core.str(r[3]), school: Core.str(r[4]), reason: Core.str(r[9]) || '결석', date: Core.nextClassDate(dates, r[1]), memo: Core.str(r[11]) });
+  });
   var mappings = {};
   readTable_(SHEET.MAP).rows.forEach(function (r) { if (r[0]) mappings[r[0]] = r[1]; });
   return { year: year, dates: dates, classes: classes, schools: schools, restrictions: restrictions, mappings: mappings };
@@ -323,7 +335,141 @@ API.state = function (req, user) {
     .map(function (u) { return { at: u[0], by: u[1], file: u[2], fileTs: u[3], inst: u[4], name: u[5], count: u[6], result: u[7] }; })
     .reverse();
   out.uploadedFiles = uploads.map(function (u) { return u[2] + '|' + u[3]; });
+  out.links = readLinks_();
+  out.absences = readAbsences_().filter(function (a) { return a.date === date; });
+  var att = readAtt_();
+  out.att = att.filter(function (a) { return a.date === date; }).pop() || null;
+  out.attPrev = att.filter(function (a) { return a.date < date; }).pop() || null;
+  if (out.attPrev) out.attPrev = { date: out.attPrev.date, blocks: (out.attPrev.data.blocks || []).map(function (b) { return { key: b.key, title: b.title, sessions: b.sessions, rooms: b.rooms, line: b.line, tag: b.tag }; }) };
+  out.schools = ctx.schools;
+  out.groups = ctx.classes.map(function (c) { return { '수업반': c['수업반'], '접수명': c['접수명'], order: c.order, range: c.range }; });
   return out;
+};
+
+/* ───────── 같은 반 요청 ───────── */
+
+function readLinks_() {
+  var map = {};
+  readTable_(SHEET.LINKS).rows.forEach(function (r) {
+    var g = map[r[0]] || (map[r[0]] = { id: r[0], date: r[1], scope: r[2], memo: r[6], by: r[7], at: r[8], members: [] });
+    g.members.push({ no: r[3], name: r[4], school: r[5] });
+  });
+  return Object.keys(map).map(function (k) { return map[k]; });
+}
+
+API.linkAdd = function (req, user) {
+  return withLock_(function () {
+    var members = (req.members || []).filter(function (m) { return Core.str(m.name); });
+    if (members.length < 2) throw apiError_('BAD', '2명 이상 골라 주세요.');
+    var id = 'L' + Date.now().toString(36);
+    var at = now_();
+    appendRows_(SHEET.LINKS, members.map(function (m) {
+      return [id, req.date, req.scope === 'keep' ? '계속' : '이번', Core.str(m.no), Core.str(m.name), Core.str(m.school), Core.str(req.memo), user.name, at];
+    }));
+    bumpRev_();
+    return { id: id };
+  });
+};
+
+API.linkRemove = function (req) {
+  return withLock_(function () {
+    writeTable_(SHEET.LINKS, readTable_(SHEET.LINKS).rows.filter(function (r) { return r[0] !== req.id; }));
+    bumpRev_();
+    return {};
+  });
+};
+
+/* ───────── 결석 기록 ───────── */
+
+var ABS_KEYS = ['id', 'date', 'no', 'name', 'school', 'ban', 'cls', 'phone', 'src', 'reason', 'cancelAt', 'memo', 'excused', 'by', 'at'];
+
+function readAbsences_() {
+  return readTable_(SHEET.ABS).rows.map(function (r) {
+    var o = {};
+    ABS_KEYS.forEach(function (k, i) { o[k] = r[i]; });
+    o.excused = r[12] === 'Y';
+    return o;
+  });
+}
+
+API.absSave = function (req, user) {
+  return withLock_(function () {
+    var rec = req.rec || {};
+    if (!Core.str(rec.name) || !rec.date) throw apiError_('BAD', '학생명과 수업일이 필요합니다.');
+    var rows = readTable_(SHEET.ABS).rows;
+    var id = rec.id || ('A' + Date.now().toString(36));
+    var row = ABS_KEYS.map(function (k) { return k === 'excused' ? (rec.excused ? 'Y' : '') : Core.str(rec[k]); });
+    row[0] = id; row[13] = user.name; row[14] = now_();
+    var i = -1;
+    rows.forEach(function (r, k) { if (r[0] === id) i = k; });
+    // 같은 수업일·같은 신청번호 기록이 이미 있으면 그 기록을 고칩니다
+    if (i < 0 && rec.no) rows.forEach(function (r, k) { if (r[1] === rec.date && r[2] === rec.no) { i = k; row[0] = id = r[0]; } });
+    if (i >= 0) rows[i] = row; else rows.push(row);
+    writeTable_(SHEET.ABS, rows);
+    bumpRev_();
+    return { id: id };
+  });
+};
+
+API.absDelete = function (req) {
+  return withLock_(function () {
+    writeTable_(SHEET.ABS, readTable_(SHEET.ABS).rows.filter(function (r) { return r[0] !== req.id; }));
+    bumpRev_();
+    return {};
+  });
+};
+
+/* ───────── 출석부 ───────── */
+
+function readAtt_() {
+  return readTable_(SHEET.ATT).rows.map(function (r) {
+    var data = {};
+    try { data = JSON.parse(r[4]); } catch (e) { data = {}; }
+    return { date: r[0], version: +r[1] || 1, at: r[2], by: r[3], data: data };
+  }).sort(function (a, b) { return a.date === b.date ? a.version - b.version : (a.date < b.date ? -1 : 1); });
+}
+
+API.attSave = function (req, user) {
+  return withLock_(function () {
+    if (!req.date || !req.data) throw apiError_('BAD', '저장할 출석부가 없습니다.');
+    var json = JSON.stringify(req.data);
+    if (json.length > 48000) throw apiError_('BAD', '출석부 내용이 너무 큽니다.');
+    var prev = readAtt_().filter(function (a) { return a.date === req.date; });
+    var version = prev.length ? prev[prev.length - 1].version + 1 : 1;
+    var at = now_();
+    appendRows_(SHEET.ATT, [[req.date, String(version), at, user.name, json]]);
+    bumpRev_();
+    return { version: version, at: at, by: user.name };
+  });
+};
+
+/** 주제·교구 시트에서 그 수업일의 수업 목록을 읽습니다 (읽기만 함) */
+API.topics = function (req) {
+  var p = PropertiesService.getScriptProperties();
+  var id = p.getProperty('TOPIC_SHEET_ID') || TOPIC_SHEET_DEFAULT;
+  var tab = p.getProperty('TOPIC_TAB') || TOPIC_TAB_DEFAULT;
+  var sh;
+  try { sh = SpreadsheetApp.openById(id).getSheetByName(tab); } catch (e) {
+    return { ok: true, error: '주제·교구 시트를 열 수 없습니다 (' + e.message + ')', items: [] };
+  }
+  if (!sh) return { error: '주제·교구 시트에 「' + tab + '」 탭이 없습니다.', items: [] };
+  var values = sh.getDataRange().getValues();
+  var hi = -1, col = {};
+  for (var r = 0; r < Math.min(values.length, 5) && hi < 0; r++) {
+    var row = values[r].map(cellText_);
+    if (row.indexOf('날짜') >= 0 && row.indexOf('반') >= 0) { hi = r; row.forEach(function (h, i) { col[h] = i; }); }
+  }
+  if (hi < 0) return { error: '주제·교구 시트에서 「날짜」 「반」 제목 줄을 찾지 못했습니다.', items: [] };
+  var want = (+req.date.slice(5, 7)) + '/' + (+req.date.slice(8, 10));
+  var items = [];
+  values.slice(hi + 1).forEach(function (r) {
+    var d = r[col['날짜']];
+    var md = d instanceof Date ? Utilities.formatDate(d, TZ, 'M/d') : Core.str(d).replace(/\(.*\)/, '').trim();
+    if (md !== want) return;
+    var g = function (h) { return col[h] === undefined ? '' : Core.str(r[col[h]]); };
+    items.push({ time: g('시간'), area: g('영역'), cls: g('반'), topic: g('주제'), tools: g('교구') });
+  });
+  return { items: items };
 };
 
 API.upload = function (req, user) {
@@ -505,6 +651,12 @@ function onOpen() {
     .addToUi();
 }
 
+/** 주제·교구 시트 읽기 권한을 허용하기 위해 편집기에서 한 번 실행합니다 */
+function checkTopicSheet() {
+  var r = API.topics({ date: Core.currentRound(loadCtx_().dates, today_()) || today_() });
+  Logger.log(r.error || ('주제·교구 시트 확인: 이번 수업일 수업 ' + r.items.length + '개'));
+}
+
 function menuImportSchools() {
   init_();
   var n = importSchoolsFromNeis_();
@@ -514,7 +666,7 @@ function menuImportSchools() {
 function setupSheets() {
   init_();
   var ss = ss_();
-  [SHEET.LIST, SHEET.SUMMARY, SHEET.STATUS, SHEET.UPLOADS, SHEET.RESTRICT, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.USERS]
+  [SHEET.LIST, SHEET.SUMMARY, SHEET.STATUS, SHEET.UPLOADS, SHEET.RESTRICT, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.USERS, SHEET.LINKS, SHEET.ABS, SHEET.ATT]
     .forEach(function (n) { sheet_(n); });
 
   if (!readTable_(SHEET.USERS).rows.length) {

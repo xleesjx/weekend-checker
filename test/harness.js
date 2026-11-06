@@ -54,10 +54,12 @@ function createEnv(opts) {
     getSheets: () => Object.values(sheets),
     deleteSheet: (s) => { delete sheets[s.name]; }
   };
+  const topic = { rows: [] };
   const ctx = {
     console,
     SpreadsheetApp: {
       getActiveSpreadsheet: () => ss,
+      openById: () => ({ getSheetByName: (n) => (n === '하반기' ? { getDataRange: () => ({ getValues: () => topic.rows }) } : null) }),
       getUi: () => { throw new Error('no ui'); },
       newConditionalFormatRule: () => { const b = { whenTextStartsWith: () => b, setBackground: () => b, setFontColor: () => b, setRanges: () => b, build: () => ({}) }; return b; },
       ProtectionType: { SHEET: 'SHEET' }
@@ -98,7 +100,7 @@ function createEnv(opts) {
   vm.runInContext(fs.readFileSync(path.join(root, 'gas/Code.gs'), 'utf8'), ctx, { filename: 'Code.gs' });
   vm.runInContext(fs.readFileSync(path.join(root, 'gas/Core.gs'), 'utf8'), ctx, { filename: 'Core.gs' });
   return {
-    ctx, sheets, props,
+    ctx, sheets, props, topic,
     setNow: (d) => { now = d; },
     call: (action, payload, email) => {
       const out = ctx.doPost({ postData: { contents: JSON.stringify(Object.assign({ action, token: 'tok:' + (email || 'owner@example.com') }, payload || {})) } });

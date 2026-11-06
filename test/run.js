@@ -158,4 +158,42 @@ ok(res.results[0].result === '오류', '받은 시각이 없으면 거부');
 res = env.call('state', { date: '2026-11-14' });
 ok(res.uploadedFiles.indexOf('통합예약신청자목록 (2).xls|2026-11-11T09:40:00.000') >= 0, '이미 올린 파일은 이름+시각으로 기억');
 
+// 같은 반 요청
+let lk = env.call('linkAdd', { date: '2026-11-14', scope: 'keep', memo: '전화 요청', members: [{ no: '251600', name: '나나나', school: '가온초' }, { no: '', name: '친구', school: '새솔초' }] });
+ok(lk.ok && lk.id, '같은 반 요청 저장');
+res = env.call('state', { date: '2026-11-14' });
+ok(res.links.length === 1 && res.links[0].members.length === 2 && res.links[0].scope === '계속', '요청 묶음 불러오기');
+ok(env.call('linkAdd', { date: '2026-11-14', members: [{ name: '혼자' }] }).ok === false, '1명은 묶을 수 없음');
+env.call('linkRemove', { id: lk.id });
+ok(!env.call('state', { date: '2026-11-14' }).links.length, '요청 해제');
+
+// 결석 기록 → 다음 수업일 신청 제한, 출석 인정이면 풀림
+let ab = env.call('absSave', { rec: { date: '2026-11-07', no: '251178', name: '문서윤', school: '해솔초등학교', ban: '3-2', cls: '기초 1,2반', src: '당일 결석', reason: '당일 무단결석' } });
+ok(ab.ok && ab.id, '결석 기록 저장');
+const next = { name: '통합예약신청자목록 - 2026-11-11T110000.000.xls', rows: [['251700', '[초2~3학년]11월14일 주말SW교실 기초코딩 오전반', '문지영', '010-0000-1178', '', '개인', '', '', '', '문서윤', '해솔초', '3-2', '대기', 'fake_mjy']] };
+env.setNow(new Date('2026-11-11T11:10:00+09:00'));
+env.call('upload', { date: '2026-11-14', files: [load(next)] });
+res = env.call('state', { date: '2026-11-14' });
+ok(/RESTRICT/.test(codes(row('251700'))), '결석 기록 → 다음 수업일 신청 제한: ' + codes(row('251700')));
+ok(res.absences.length === 0 && env.call('state', { date: '2026-11-07' }).absences.length === 1, '결석 기록은 그 수업일에 보임');
+env.call('absSave', { rec: { id: ab.id, date: '2026-11-07', no: '251178', name: '문서윤', school: '해솔초등학교', reason: '질병', excused: true } });
+res = env.call('state', { date: '2026-11-14' });
+ok(!/RESTRICT/.test(codes(row('251700'))), '출석 인정이면 제한 풀림');
+ok(env.call('state', { date: '2026-11-07' }).absences.length === 1, '같은 학생 기록은 하나로 고침');
+
+// 출석부 저장·차수
+let sv = env.call('attSave', { date: '2026-11-07', data: { blocks: [{ key: '기초 1,2반#0', title: '11월 7일 테스트 오전1반', sessions: '기초1/기초2', rooms: '라온실/놀이실', line: 'x', tag: '기초1', students: [] }] } });
+ok(sv.ok && sv.version === 1, '출석부 1차 저장');
+sv = env.call('attSave', { date: '2026-11-07', data: { blocks: [] } });
+ok(sv.version === 2, '다시 저장하면 2차');
+res = env.call('state', { date: '2026-11-07' });
+ok(res.att && res.att.version === 2, '최신 차수 불러오기');
+res = env.call('state', { date: '2026-11-14' });
+ok(res.attPrev && res.attPrev.date === '2026-11-07', '지난 회차 출석부 설정');
+
+// 주제·교구 시트
+env.topic.rows = [['날짜', '요일', '시간', '영역', '반', '소속', '강사명', '주제', '교구'], ['11/7', '토', '오전', 'SW', '기초1', '', '', 'AI 게임', '노트북 8대'], ['11/14', '토', '오전', 'SW', '기초1', '', '', '로비코', '로비코, 태블릿PC']];
+const tp = env.call('topics', { date: '2026-11-14' });
+ok(tp.ok && tp.items.length === 1 && tp.items[0].cls === '기초1' && /로비코/.test(tp.items[0].tools), '주제·교구 시트에서 그 날짜만 읽기');
+
 console.log('테스트 ' + passed + '개 통과');

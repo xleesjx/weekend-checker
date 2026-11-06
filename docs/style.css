@@ -128,3 +128,27 @@ tr.expand td { background: #fff; border-bottom: 2px solid #CBD5E1; white-space: 
   .only-mobile { display: block; }
   .tip:hover::after, .tip:focus::after { left: auto; right: 0; transform: none; max-width: 80vw; }
 }
+
+.badge.link { background: #EDE9FE; color: #5B21B6; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.selbar { background: #5B21B6; color: #fff; border-radius: 12px; padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.selbar .btn { color: var(--ink); }
+input.sug, textarea.sug { background: #EFF4FF; border-color: #93B4F8; }
+input.warn { background: #FFFAEB; border-color: #FDB022; }
+.att-tbl td input, .att-tbl td select { width: 100%; min-height: 34px; padding: 4px 6px; font-size: 13px; box-sizing: border-box; }
+.part { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.part-head { background: #F1F5F9; padding: 8px 12px; font-weight: 700; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; }
+.prow { display: grid; grid-template-columns: 70px minmax(0, 1fr) 70px 40px 44px; gap: 6px; align-items: center; padding: 4px 10px; border-top: 1px solid #F1F5F9; font-size: 13px; }
+.prow input { min-height: 32px; padding: 3px 6px; font-size: 13px; width: 100%; box-sizing: border-box; }
+.prow.sep { border-top: 1px solid #94A3B8; }
+.sheet { border: 1px solid #CBD5E1; padding: 14px; background: #fff; }
+.sheet table { border-collapse: collapse; width: 100%; }
+.sheet td, .sheet th { border: 1px solid #334155; font-size: 12px; padding: 4px 6px; text-align: center; }
+.sheet th { background: #DBDBDB; }
+.sheet .t1 { background: #FFF2CC; text-align: center; font-weight: 700; font-size: 16px; padding: 6px; border: 2px solid #334155; }
+.sheet .t2 { background: #FFF2CC; text-align: center; font-weight: 700; font-size: 13px; padding: 6px; border: 2px solid #334155; border-top: 0; margin-bottom: 0; }
+tr.cut td { text-decoration: line-through; color: #94A3B8; }
+.chipbtn { font: inherit; font-size: 13px; border: 1px solid #CBD5E1; background: #fff; border-radius: 999px; padding: 6px 12px; min-height: 36px; cursor: pointer; }
+.chipbtn.on { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 700; }
+.abs-card { padding: 14px 16px; border-bottom: 1px solid var(--line2); display: flex; flex-direction: column; gap: 8px; }
+.abs-card.ex { background: #F8FAFC; }
