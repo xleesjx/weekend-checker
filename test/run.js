@@ -36,7 +36,10 @@ function codes(row) { return row.issues.map((i) => i.code).sort().join(','); }
   const sch2 = [{ name: '가온초등학교', level: '초' }, { name: '가온중학교', level: '중' }, { name: '해솔초등학교', level: '초' }];
   const chk = (school, ban) => Core.analyzeRound([{ no: '1', row: ['1', 't', '부모', '010', '', '개인', '', '', '', '학생', school, ban, '대기', 'id'], cls: { 시간대: '오전', 수업반: 'x', 접수명: 'x', range: { min: 1, max: 9 } } }], { schools: sch2 }, '2026-11-07')['1'].issues.map((i) => i.detail);
   ok(chk('가온', '3-2').some((d) => /정식 이름.*가온초등학교 \/ 가온중학교/.test(d)), '학교급 없이 줄여 쓴 학교명: ' + chk('가온', '3-2'));
-  ok(chk('해솔', '3-2').some((d) => /정식 이름/.test(d)), '후보 하나라도 학교급이 없으면 확인');
+  ok(!chk('해솔', '3-2').length, '후보가 하나면 자동으로 정식 이름 (확인 안 띄움)');
+  const sch3 = [{ name: '신정초등학교', level: '초' }, { name: '신정상초등학교', level: '초' }, { name: '울산옥동초등학교', level: '초' }];
+  ok(Core.officialSchool('신정초', sch3).name === '신정초등학교' && Core.officialSchool('신정상초', sch3).name === '신정상초등학교' && Core.officialSchool('옥동초', sch3).name === '울산옥동초등학교', '앞 두 글자가 같은 학교도 이름으로 구분');
+  ok(Core.officialSchool('신정', sch3).name === '신정초등학교', '학교급 없어도 이름이 똑같은 학교가 하나면 자동');
   ok(!chk('해솔초', '3-2').length && !chk('가온초등학교', '3학년 2반').length && !chk('해솔초', '32').length && !chk('해솔초', '3').length, '정상 학교명·학반은 통과');
   ok(chk('해솔초', '1-!').some((d) => /학반 형식/.test(d)), '1-! 학반 형식');
   ok(chk('해솔초', '60407').some((d) => /학반 형식/.test(d)), '60407 학반 형식');

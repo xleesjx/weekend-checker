@@ -1,4 +1,4 @@
-/* 주말 신청 점검 — 웹 화면 */
+/* 창의융합프로그램 신청자 명단 점검 — 웹 화면 */
 (function () {
   'use strict';
 
@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '16';
+  var APP_VERSION = '17';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -63,7 +63,7 @@
   }
 
   function showLogin(msg) {
-    root.innerHTML = '<div class="card login"><div class="brand">주말 신청 점검</div>' +
+    root.innerHTML = '<div class="card login"><div class="brand">창의융합프로그램 신청자 명단 점검</div>' +
       '<p class="muted">등록된 점검자 구글 계정으로 로그인해 주세요.</p>' +
       (msg ? '<p style="color:var(--red)">' + esc(msg) + '</p>' : '') +
       '<div id="gbtn"></div></div>';
@@ -99,10 +99,29 @@
     if (tokenValid(saved)) { S.token = saved; start(); } else showLogin();
   }
 
+  /** 처음 불러올 때: 돌아가는 표시 + 진행 단계 문구 (멈춘 것처럼 보이지 않도록) */
+  function showLoader() {
+    var steps = ['서버에 연결하는 중…', '구글 시트에서 명단을 읽는 중…', '점검 결과를 계산하는 중…', '화면을 준비하는 중…'];
+    root.innerHTML = '<div class="loader" role="status" aria-live="polite"><div class="spin" aria-hidden="true"></div>' +
+      '<div class="ld-title">창의융합프로그램 신청자 명단 점검</div><div class="ld-msg" id="ldmsg">' + steps[0] + '</div>' +
+      '<div class="ld-bar" aria-hidden="true"><span id="ldbar"></span></div><div class="ld-sec muted small" id="ldsec"></div></div>';
+    var t0 = Date.now();
+    var timer = setInterval(function () {
+      var m = document.getElementById('ldmsg');
+      if (!m) { clearInterval(timer); return; }
+      var sec = (Date.now() - t0) / 1000;
+      m.textContent = steps[Math.min(steps.length - 1, Math.floor(sec / 2.5))];
+      var bar = document.getElementById('ldbar');
+      if (bar) bar.style.width = Math.min(95, Math.round(100 * (1 - Math.exp(-sec / 6)))) + '%';
+      var sc = document.getElementById('ldsec');
+      if (sc) sc.textContent = Math.floor(sec) + '초' + (sec > 8 ? ' · 처음 접속할 때는 구글 서버가 깨어나느라 10~20초 걸릴 수 있습니다' : '');
+    }, 250);
+  }
+
   function start() {
     var p = jwtPayload(S.token) || {};
     S.user = { email: p.email, name: p.name };
-    root.innerHTML = '<div class="center-msg">명단을 불러오는 중…</div>';
+    showLoader();
     load(null).then(function () {
       try { if (!localStorage.getItem('guide-v1')) { showGuide(); localStorage.setItem('guide-v1', '1'); } } catch (e) { /* 무시 */ }
     });
@@ -325,7 +344,7 @@
   function render() {
     if (!S.data) return;
     var counts = { red: openRows('red').length, amber: openRows('amber').length };
-    var html = '<header class="top"><div class="wrap"><span class="brand">주말 신청 점검</span><nav class="menu" aria-label="메뉴">' +
+    var html = '<header class="top"><div class="wrap"><span class="brand">창의융합프로그램 신청자 명단 점검</span><nav class="menu" aria-label="메뉴">' +
       VIEWS.map(function (v) {
         var n = v[0] === 'review' && (counts.red + counts.amber) ? ' (' + (counts.red + counts.amber) + ')' : '';
         return '<button data-view="' + v[0] + '" class="' + (S.view === v[0] ? 'on' : '') + '">' + v[1] + n + '</button>';
@@ -382,7 +401,7 @@
 
     var done = doneRows().length;
     html += '<section class="tiles"><div class="card tile"><span class="muted small">취소 대상 · 미처리 ' + tip('중복 신청, 단체 신청, 대상 학년, 관외 학교, 신청 제한 학생. 연락 후 취소 처리할 대상입니다.') + '</span><strong style="color:var(--red)">' + counts.red + '건</strong></div>' +
-      '<div class="card tile"><span class="muted small">확인 필요 · 미처리 ' + tip('입력 내용 오류, 학부모 연락처 필요. 연락해서 수정을 요청할 대상입니다.') + '</span><strong style="color:var(--amber)">' + counts.amber + '건</strong></div>' +
+      '<div class="card tile"><span class="muted small">확인 필요 · 미처리 ' + tip('입력 내용 오류, 학부모 연락처 필요. 보호자에게 연락해 확인한 뒤 통합예약시스템 관리자 페이지에서 원본을 고칩니다. 원본을 고쳐 두면 다음 명단부터 다시 걸리지 않습니다.') + '</span><strong style="color:var(--amber)">' + counts.amber + '건</strong></div>' +
       '<div class="card tile"><span class="muted small">처리 완료 · 문제없음</span><strong>' + done + '건</strong></div></section>';
 
     ['오전', '오후'].forEach(function (t) {
@@ -466,7 +485,7 @@
     var head = cols.map(function (i) { return '<th>' + (i === 1 ? '반' : esc(H[i])) + '</th>'; }).join('') + '<th class="chk">사유</th><th>자세한 내용</th><th>처리</th>';
     var sections = [
       ['red', '취소 대상 · 미처리', '중복 · 단체 · 대상 학년 · 관외 · 신청 제한 — 먼저 처리', openRows('red')],
-      ['amber', '확인 필요 · 미처리', '입력 내용 오류 · 학부모 연락처 필요 — 연락 후 수정 요청', openRows('amber')],
+      ['amber', '확인 필요 · 미처리', '입력 내용 오류 · 학부모 연락처 필요 — 보호자에게 연락해 확인한 뒤 <b>통합예약시스템 관리자 페이지에서 원본 수정</b> (다음 명단부터 다시 걸리지 않습니다)', openRows('amber')],
       ['done', '처리 완료 · 문제없음', '최근 처리한 것이 위 · 잘못 누른 것은 되돌리기', doneRows()]
     ];
     var html = '<section class="card pad row between"><div class="row">' + roundSelect() + colsToolbar() + '</div>' +
@@ -657,7 +676,7 @@
       '<li><b>통합예약 엑셀 다운로드</b> — 통합예약시스템에서 반별 신청명단을 내려받습니다. 파일 이름은 바꾸지 마세요.</li>' +
       '<li><b>명단 올리기</b> — 버튼 한 번이면 다운로드 폴더에서 새 명단만 골라 올립니다. 처음 한 번은 다운로드 폴더 안의 「주말명단」 같은 하위 폴더를 지정하고(다운로드 폴더 자체는 크롬이 막습니다) 「방문할 때마다 허용」을 고르세요. 크롬 설정의 다운로드 위치도 그 폴더로 바꿔 두면 편합니다. <b>파일 수정 허용 창은 절대 허용하지 마세요.</b></li>' +
       '<li><b>취소 대상 처리</b> — 점검 목록 빨간 구역부터 연락·취소하고 「완료」를 누릅니다.</li>' +
-      '<li><b>확인 필요 처리</b> — 노란 구역을 연락·확인하고 「완료」 또는 「문제없음」을 누릅니다.</li>' +
+      '<li><b>확인 필요 처리</b> — 노란 구역을 연락·확인하고, 틀린 내용은 <b>통합예약시스템 관리자 페이지에서 원본을 수정</b>한 뒤 「완료」를 누릅니다(정상이면 「문제없음」). 원본을 고쳐 두면 다음 명단부터 다시 걸리지 않습니다.</li>' +
       '<li><b>전체 명단</b>에서 반별 전체 신청자를 원본 엑셀 순서로 볼 수 있습니다.</li></ol>' +
       '<p class="muted small" style="margin:0">다른 선생님이 처리한 내용은 20초 안에 자동으로 반영됩니다. ? 표시에 마우스를 올리면 설명이 나옵니다.</p>' +
       '<div class="row" style="justify-content:flex-end"><button class="btn primary" data-g="close">확인</button></div></div></div>';

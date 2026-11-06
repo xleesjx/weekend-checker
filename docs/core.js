@@ -1,5 +1,5 @@
 /*
- * 주말 신청 점검 — 공통 판정 로직
+ * 창의융합프로그램 신청자 명단 점검 — 공통 판정 로직
  * 브라우저(docs/core.js)와 Apps Script(gas/Core.gs)에서 같은 내용으로 사용합니다.
  * gas/Core.gs 는 이 파일을 그대로 복사한 것입니다 (npm run build 또는 cp).
  */
@@ -183,8 +183,16 @@ var Core = (function () {
       if (!lv) return true;
       return (s.level || schoolLevel(s.name)) === lv;
     });
-    // 학교급(초·중) 없이 줄여 쓴 이름은 후보가 하나여도 확인 필요 (예: '옥동')
-    if (cands.length === 1 && lv) return { name: cands[0].name, ok: true };
+    if (cands.length === 1) return { name: cands[0].name, ok: true };
+    // 앞 두 글자가 같은 학교가 여럿이면, 지역명·학교급을 뗀 이름이 똑같은 학교 하나로 정합니다 (예: 신정초 → 신정초등학교, 신정상초등학교와 구분)
+    var base = function (x) {
+      var b = normSchool(x).replace(/(초등학교|초교|초|중학교|중|고등학교|고)$/, '');
+      if (REGION_RE.test(b) && b.length > 3) b = b.slice(2);
+      return b;
+    };
+    var same = cands.filter(function (s) { return base(s.name) === base(t); });
+    if (same.length === 1) return { name: same[0].name, ok: true };
+    // 후보가 둘 이상(예: 옥동 → 옥동초·옥동중)이거나 하나도 없을 때만 확인 필요
     return { name: str(raw), ok: false, cands: cands.map(function (s) { return s.name; }) };
   }
 

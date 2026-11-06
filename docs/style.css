@@ -183,3 +183,13 @@ tr.cut td { text-decoration: line-through; color: #94A3B8; }
 .xk-h { display: inline-block; font-size: 12px; font-weight: 700; color: #475569; background: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 6px; padding: 2px 8px; }
 .warnbar { background: #FFF7ED; border: 2px solid #EA580C; color: #9A3412; border-radius: 8px; padding: 8px 12px; font-size: 14px; }
 .xls td.xk button[data-x=att-move] { font-size: 16px; font-weight: 700; min-width: 40px; }
+
+/* 처음 불러오기 */
+.loader { min-height: 70vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 16px; text-align: center; }
+.spin { width: 48px; height: 48px; border-radius: 50%; border: 5px solid #DBEAFE; border-top-color: #2563EB; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ld-title { font-weight: 700; font-size: 18px; }
+.ld-msg { font-size: 15px; color: #1D4ED8; min-height: 1.4em; }
+.ld-bar { width: min(320px, 80vw); height: 8px; background: #E5E7EB; border-radius: 99px; overflow: hidden; }
+.ld-bar span { display: block; height: 100%; width: 3%; background: linear-gradient(90deg, #60A5FA, #2563EB); border-radius: 99px; transition: width 0.25s linear; }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
