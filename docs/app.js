@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '14';
+  var APP_VERSION = '15';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -1015,7 +1015,9 @@
     var list = src ? src.students : [];
     var over = list.length > Roster.CAP;
     var blk = { title: Roster.makeTitle(S.date, b), line: Roster.makeLine(b), tag: b.tag, students: list };
+    var warnN = list.filter(function (s) { return !s.schoolOk; }).length + list.filter(function (s) { return !s.banOk; }).length;
     var sheet = Roster.sheetHtml(blk, { cell: function (t, c, v, s) {
+      if (t === 4 && c === 10) return '<span class="xk-h">' + (src && src.parts > 1 ? '반 교체' : '표시') + '</span>';
       if (!s) return;
       if (c === 1) return '<input type="text" class="cellin' + (s.schoolOk ? '' : ' warn') + '" value="' + esc(s.school) + '" data-xi="att-edit" data-no="' + esc(s.no) + '" data-f="school" aria-label="학교명">';
       if (c === 2) return '<input type="text" class="cellin' + (s.banOk ? '' : ' warn') + '" value="' + esc(s.ban) + '" data-xi="att-edit" data-no="' + esc(s.no) + '" data-f="ban" aria-label="학반">';
@@ -1024,6 +1026,7 @@
     } });
     return '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><b>' + esc(b.label) + '</b><span style="font-weight:700;color:' + (over ? 'var(--red)' : 'inherit') + '">' + list.length + '명' + (over ? ' ⚠ 16명 초과' : '') +
       (src && src.multi && src.parts > 1 ? ' · 1학년 ' + list.filter(function (s) { return s.grade1; }).length + '명' : '') + '</span></div>' +
+      (warnN ? '<div class="warnbar">⚠ 확인이 필요한 칸 <b>' + warnN + '개</b> — 주황색으로 깜빡이는 칸을 눌러 고쳐 주세요.</div>' : '') +
       '<div class="tbox">' + sheet + '</div></section>';
   }
 
@@ -1055,7 +1058,7 @@
         return '<label class="row" style="gap:8px"><input type="checkbox" data-xc="att-keep" data-id="' + esc(g.id) + '"' + (A.acceptKeep[g.id] ? ' checked' : '') + ' style="width:18px;height:18px"><span>' + label + ' · <b>지난 요청 다시 적용?</b> (' + esc(Core.shortDate(g.date)) + '부터 계속 적용)</span></label>';
       }).join('') : '<span class="muted">이번 회차 요청이 없습니다. 전체 명단에서 묶을 수 있습니다.</span>') + '</section>';
       if (A.errors.length) html += '<section class="card pad" style="border-color:#FECDCA;background:var(--red-bg)">' + A.errors.map(esc).join('<br>') + '</section>';
-      html += '<section class="card pad row between small"><span class="muted">③ 내려받을 엑셀 출석부와 똑같은 모양입니다(학생은 이름 가나다순). 분반은 학교별로 나누고, 학교는 정식 이름으로 바꾼 결과입니다. <b>노란 칸</b>은 자동으로 정하지 못한 곳이니 눌러서 고쳐 주세요. [⇄]로 다른 반으로 옮깁니다. 규칙: 같은 반 요청 → 같은 학교 → 한 반 16명 이하 → 인원 균등 (창의 1,2반은 1학년도 균등)</span><button class="btn" data-x="att-resplit">자동 분반 다시 하기</button></section>' +
+      html += '<section class="card pad row between small"><span class="muted">③ 내려받을 엑셀 출석부와 똑같은 모양입니다(학생은 이름 가나다순). 분반은 학교별로 나누고, 학교는 정식 이름으로 바꾼 결과입니다. <b>주황색 칸</b>은 자동으로 정하지 못한 곳이니 눌러서 고쳐 주세요. 표 오른쪽 바깥의 버튼·표시는 엑셀에 나오지 않습니다. [⇄]로 다른 반으로 옮깁니다. 규칙: 같은 반 요청 → 같은 학교 → 한 반 16명 이하 → 인원 균등 (창의 1,2반은 1학년도 균등)</span><button class="btn" data-x="att-resplit">자동 분반 다시 하기</button></section>' +
         A.blocks.map(function (b, i) { return sheetBlock(b, i, letters); }).join('');
       var sp = splitProblems();
       if (sp.length) html += '<section class="card pad small" style="border-color:#FECDCA;background:var(--red-bg)">' + sp.map(esc).join('<br>') + '</section>';
@@ -1153,6 +1156,7 @@
       var sheet = Roster.sheetHtml({ title: b.title, line: b.line, tag: b.tag, students: liveList }, { cell: function (t, c, v, s) {
         if (t === 0 && c === 0) return '<input type="text" class="cellin big" value="' + esc(b.title) + '" data-xi="att-ef" data-i="' + i + '" data-f="title" aria-label="제목">';
         if (t === 2 && c === 0) return '<input type="text" class="cellin" value="' + esc(b.line) + '" data-xi="att-ef" data-i="' + i + '" data-f="line" aria-label="교실·교구">';
+        if (t === 4 && c === 10) return '<span class="xk-h">학생 취소</span>';
         if (s && c === 10) return (s.added ? '<span class="badge new">추가</span>' : '') + '<button class="btn sm" data-x="att-cancel" data-i="' + i + '" data-j="' + idx(s) + '">취소 처리</button>';
       } });
       html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><b>' + (i + 1) + '번째 반</b>' +
