@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '11';
+  var APP_VERSION = '12';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,

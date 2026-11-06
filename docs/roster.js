@@ -267,78 +267,82 @@ var Roster = (function () {
     return '출석부_' + md + (version > 1 ? '_' + version + '차' : '') + '.xlsx';
   }
 
-  /* ───────── 엑셀 (보내 주신 출석부 서식) ───────── */
+  /* ───────── 엑셀 (원본 출석부 서식 그대로) ───────── */
 
   var FONT = '맑은 고딕';
-  var TITLE_FILL = 'FFFFF2CC', HEAD_FILL = 'FFDBDBDB';
-  var BLOCK_ROWS = 28, STUDENT_ROWS = 18;
+  var BLOCK_ROWS = 28, STUDENT_ROWS = 18, COLS = 11;
+  // 원본 출석부(2026 출석부 1031 시트) 첫 반 블록 28줄 × A~K열의 칸 서식을 그대로 옮긴 본
+  // 각 서식: [글자 크기, 굵게, 채우기 색, 가로 정렬, 세로 정렬, 줄 바꿈, 왼쪽·오른쪽·위·아래 테두리]
+  var TPL_STYLES = [[17.0,1,"FFF2CC","center","center",1,"medium","medium","medium","thin"],[11.0,0,null,null,null,0,null,null,"medium",null],[11.0,0,null,null,null,0,null,"medium","medium",null],[11.0,0,null,null,null,0,null,null,null,null],[11.0,0,null,null,null,0,"medium",null,null,"thin"],[11.0,0,null,null,null,0,null,null,null,"thin"],[11.0,0,null,null,null,0,null,"medium",null,"thin"],[13.0,1,"FFF2CC","center","center",1,"medium","medium",null,"medium"],[11.0,0,null,null,null,0,null,null,null,"medium"],[11.0,0,null,null,null,0,null,"medium",null,"medium"],[12.0,1,"DBDBDB","center","center",1,"medium","thin","medium","thin"],[12.0,1,"DBDBDB","center","center",1,"thin","thin","medium","thin"],[11.0,0,null,null,null,0,null,null,"medium","thin"],[11.0,0,null,null,null,0,null,"thin","medium","thin"],[12.0,1,"DBDBDB","center","center",0,"thin","medium","medium","thin"],[11.0,0,null,null,null,0,"medium","thin",null,"thin"],[11.0,0,null,null,null,0,"thin","thin",null,"thin"],[11.0,1,"DBDBDB","center","center",1,null,"thin",null,"thin"],[11.0,0,null,null,null,0,"thin","medium",null,"thin"],[11.0,0,null,"center","center",1,"medium","thin","thin","thin"],[11.0,0,null,"center","center",0,"thin","thin","thin","thin"],[11.0,0,null,"center","center",1,"thin","thin","thin","thin"],[11.0,0,null,"center","center",1,null,"thin",null,"thin"],[11.0,0,null,"center","center",0,null,"medium",null,"thin"],[11.0,0,null,"center","center",0,null,"medium","thin","thin"],[12.0,0,null,"center","center",1,null,"thin",null,"thin"],[11.0,0,null,null,"center",0,null,"medium","thin","thin"],[11.0,0,null,"center","center",1,"medium","thin","thin",null],[12.0,0,null,"center","center",1,null,"thin",null,null],[11.0,0,null,"center","center",1,null,"thin",null,null],[11.0,0,null,null,"center",0,null,"medium","thin",null],[12.0,0,null,"center","center",1,"thin","thin","thin","thin"],[11.0,0,null,null,"center",0,"thin","medium","thin","thin"],[11.0,0,null,"center","center",1,"medium","thin","medium","thin"],[11.0,0,null,"center","center",1,"thin","thin","medium","thin"],[11.0,0,null,"center","center",0,"thin","thin","medium","thin"],[11.0,0,null,null,null,0,null,"thin","thin","thin"],[11.0,0,null,null,null,0,null,null,"thin","thin"],[11.0,0,null,null,"center",1,"thin","thin","thin","thin"],[11.0,0,null,"center","center",1,"medium","thin","thin","medium"],[11.0,0,null,"center","center",1,"thin","thin","thin","medium"],[11.0,0,null,null,null,0,null,"thin","thin","medium"],[11.0,0,null,"center","center",0,"thin","thin","thin","medium"],[11.0,0,null,null,null,0,null,null,"thin","medium"]];
+  var TPL_GRID = [[0,1,1,1,1,1,1,1,1,2,3],[4,5,5,5,5,5,5,5,5,6,3],[7,8,8,8,8,8,8,8,8,9,3],[10,11,11,11,11,11,12,12,13,14,3],[15,16,16,16,16,17,17,17,17,18,3],[19,20,20,20,21,22,22,22,22,23,3],[19,20,20,20,21,22,22,22,22,24,3],[19,20,20,20,21,22,22,22,22,24,3],[19,20,20,20,21,22,22,22,22,24,3],[19,20,20,20,21,22,22,22,22,24,3],[19,20,20,20,21,22,22,22,22,24,3],[19,20,20,20,21,22,22,22,22,24,3],[19,20,20,20,21,22,22,22,22,24,3],[19,20,20,20,21,22,22,22,22,24,3],[19,20,20,20,21,22,22,22,22,24,3],[19,20,20,20,21,22,22,22,22,24,3],[19,20,20,20,21,25,25,25,22,26,3],[19,20,20,20,21,25,25,25,22,26,3],[27,20,20,20,21,28,28,28,29,30,3],[19,20,20,20,21,31,31,31,21,32,3],[19,20,20,20,21,31,31,31,21,32,3],[19,20,20,20,21,31,31,31,21,32,3],[19,21,21,21,21,25,25,25,22,26,3],[33,34,13,35,13,35,12,13,34,13,3],[19,21,36,20,36,20,37,36,21,36,3],[19,21,36,20,36,20,37,36,38,36,3],[19,21,36,20,36,20,37,36,21,36,3],[39,40,41,42,41,42,43,41,40,41,3]];
+  var TPL_HEIGHTS = [22.5, 22.5, 38.25, 30.75, 30.75, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 29.25, 29.25, 29.25, 29.25, 29.25];
 
-  function border(l, r, t, b) {
-    var o = {};
-    if (l) o.left = { style: l }; if (r) o.right = { style: r }; if (t) o.top = { style: t }; if (b) o.bottom = { style: b };
-    return o;
+  /** 칸마다 새 서식 객체를 넣습니다 (병합된 칸끼리 서식을 공유하지 않도록) */
+  function applyStyle(cell, k) {
+    var t = TPL_STYLES[k];
+    var st = { font: { name: FONT, size: t[0], bold: !!t[1], color: { argb: 'FF000000' }, charset: 129, family: 3 } };
+    if (t[2]) st.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + t[2] }, bgColor: { indexed: 64 } };
+    var al = {};
+    if (t[3]) al.horizontal = t[3];
+    if (t[4]) al.vertical = t[4] === 'center' ? 'middle' : t[4];  // 엑셀의 세로 가운데는 ExcelJS에서 'middle'
+    if (t[5]) al.wrapText = true;
+    st.alignment = al;
+    var bd = {};
+    ['left', 'right', 'top', 'bottom'].forEach(function (side, i) { if (t[6 + i]) bd[side] = { style: t[6 + i], color: { argb: 'FF000000' } }; });
+    st.border = bd;
+    cell.style = st;
   }
 
   /** blocks: [{ title, line, tag, students:[{school, ban, name}] }] → ExcelJS Workbook */
   function buildWorkbook(ExcelJS, blocks, sheetName) {
     var wb = new ExcelJS.Workbook();
+    var last = Math.max(1, blocks.length) * BLOCK_ROWS;
     var ws = wb.addWorksheet(sheetName, {
-      pageSetup: { paperSize: 9, orientation: 'portrait', scale: 87, fitToPage: false,
-        margins: { left: 0.7087, right: 0.5906, top: 1.1811, bottom: 0.9843, header: 0.3937, footer: 0.1969 } },
-      views: [{ showGridLines: true }]
+      properties: { defaultRowHeight: 16.5 },
+      pageSetup: { paperSize: 9, orientation: 'portrait', scale: 87, fitToPage: false, fitToWidth: 0, fitToHeight: 0,
+        margins: { left: 0.7086614173228347, right: 0.5905511811023623, top: 1.1811023622047245, bottom: 0.984251968503937, header: 0.3937007874015748, footer: 0.1968503937007874 },
+        printArea: 'A1:J' + last },
+      views: [{ zoomScale: 85, zoomScaleNormal: 85 }]
     });
-    [6.25, 18.75, 8.375, 11.875, 8.125, 6.625, 6.625, 6.625, 6.625, 11].forEach(function (w, i) { ws.getColumn(i + 1).width = w; });
-    var center = { horizontal: 'center', vertical: 'middle', wrapText: true };
-    function set(r, c, v, font, fill, b, align) {
-      var cell = ws.getCell(r, c);
-      if (v !== undefined && v !== null) cell.value = v;
-      cell.font = Object.assign({ name: FONT, size: 11 }, font || {});
-      if (fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
-      if (b) cell.border = b;
-      cell.alignment = align || center;
-    }
+    [6.25, 18.75, 8.375, 11.875, 8.125, 6.625, 6.625, 6.625, 6.625, 11, 9].forEach(function (w, i) {
+      var col = ws.getColumn(i + 1);
+      col.width = w;
+      col.font = { name: FONT, size: 11, color: { argb: 'FF000000' }, charset: 129, family: 3 };
+    });
     blocks.forEach(function (blk, bi) {
       var r0 = 1 + bi * BLOCK_ROWS;
-      // 제목 (2줄 병합)
-      for (var c = 1; c <= 10; c++) {
-        set(r0, c, c === 1 ? blk.title : null, c === 1 ? { size: 17, bold: true } : null, TITLE_FILL, border(c === 1 ? 'medium' : null, c === 10 ? 'medium' : null, 'medium', null));
-        set(r0 + 1, c, null, null, TITLE_FILL, border(c === 1 ? 'medium' : null, c === 10 ? 'medium' : null, null, 'thin'));
-      }
-      ws.mergeCells(r0, 1, r0 + 1, 10);
-      ws.getRow(r0).height = 22.5; ws.getRow(r0 + 1).height = 22.5;
-      // 교실·교구
-      for (c = 1; c <= 10; c++) set(r0 + 2, c, c === 1 ? blk.line : null, { size: 13, bold: true }, TITLE_FILL, border(c === 1 ? 'medium' : null, c === 10 ? 'medium' : null, null, 'medium'));
-      ws.mergeCells(r0 + 2, 1, r0 + 2, 10);
-      ws.getRow(r0 + 2).height = 38.25;
-      // 머리글
-      var heads = ['번호', '기관(학교)', '학년/반', '신청자', '신청반'];
-      for (c = 1; c <= 10; c++) {
-        var L = c === 1 ? 'medium' : 'thin', R = c === 10 ? 'medium' : 'thin';
-        set(r0 + 3, c, c <= 5 ? heads[c - 1] : (c === 6 ? '출석여부' : (c === 10 ? '비고' : null)), { size: 12, bold: true }, HEAD_FILL, border(L, R, 'medium', 'thin'));
-        set(r0 + 4, c, c >= 6 && c <= 9 ? (c - 5) + '교시' : null, { size: 11, bold: true }, HEAD_FILL, border(L, R, 'thin', 'thin'));
-      }
-      for (c = 1; c <= 5; c++) ws.mergeCells(r0 + 3, c, r0 + 4, c);
-      ws.mergeCells(r0 + 3, 6, r0 + 3, 9);
-      ws.mergeCells(r0 + 3, 10, r0 + 4, 10);
-      ws.getRow(r0 + 3).height = 30.75; ws.getRow(r0 + 4).height = 30.75;
-      // 학생 칸 18줄 (번호는 16까지 미리, 그 이상은 학생이 있을 때)
-      for (var i = 0; i < STUDENT_ROWS; i++) {
-        var rr = r0 + 5 + i, s = blk.students[i];
-        var num = s || i < CAP ? i + 1 : null;
-        var vals = [num, s ? s.school : null, s ? s.ban : null, s ? s.name : null, s ? blk.tag : null];
-        for (c = 1; c <= 10; c++) set(rr, c, c <= 5 ? vals[c - 1] : null, c >= 6 && c <= 8 ? { size: 12 } : null, null, border(c === 1 ? 'medium' : 'thin', c === 10 ? 'medium' : 'thin', 'thin', 'thin'));
-        ws.getRow(rr).height = 26.25;
-      }
-      // 아래 표
+      // 병합을 먼저 하고, 칸마다 원본 서식을 입힙니다 (병합 뒤에 입혀야 테두리가 남습니다)
+      var merge = function (a, b, c, d) { ws.mergeCellsWithoutStyle(a, b, c, d); };
+      merge(r0, 1, r0 + 1, 10);
+      merge(r0 + 2, 1, r0 + 2, 10);
+      for (var c = 1; c <= 5; c++) merge(r0 + 3, c, r0 + 4, c);
+      merge(r0 + 3, 6, r0 + 3, 9);
+      merge(r0 + 3, 10, r0 + 4, 10);
       var sr = r0 + 5 + STUDENT_ROWS;
       for (var k = 0; k < 5; k++) {
-        var row = sr + k;
-        var top = k === 0 ? 'medium' : 'thin', bot = k === 4 ? 'medium' : 'thin';
-        var labels = k === 0 ? ['교시', '신청인원', null, '수강인원', null, '결석인원', null, null, '지도교사', null] : [k, null, null, null, null, null, null, null, null, null];
-        for (c = 1; c <= 10; c++) set(row, c, labels[c - 1], null, null, border(c === 1 ? 'medium' : 'thin', 'thin', top, bot));
-        ws.mergeCells(row, 2, row, 3); ws.mergeCells(row, 4, row, 5); ws.mergeCells(row, 6, row, 8); ws.mergeCells(row, 9, row, 10);
-        ws.getRow(row).height = 29.25;
+        merge(sr + k, 2, sr + k, 3); merge(sr + k, 4, sr + k, 5); merge(sr + k, 6, sr + k, 8); merge(sr + k, 9, sr + k, 10);
       }
+      for (var t = 0; t < BLOCK_ROWS; t++) {
+        var row = ws.getRow(r0 + t);
+        row.height = TPL_HEIGHTS[t];
+        for (c = 1; c <= COLS; c++) applyStyle(row.getCell(c), TPL_GRID[t][c - 1]);
+      }
+      // 값
+      ws.getCell(r0, 1).value = blk.title;
+      ws.getCell(r0 + 2, 1).value = blk.line;
+      ['번호', '기관(학교)', '학년/반', '신청자', '신청반'].forEach(function (h, i) { ws.getCell(r0 + 3, i + 1).value = h; });
+      ws.getCell(r0 + 3, 6).value = '출석여부';
+      ws.getCell(r0 + 3, 10).value = '비고';
+      for (c = 6; c <= 9; c++) ws.getCell(r0 + 4, c).value = (c - 5) + '교시';
+      for (var i = 0; i < STUDENT_ROWS; i++) {
+        var s = blk.students[i], rr = r0 + 5 + i;
+        if (s || i < CAP) ws.getCell(rr, 1).value = i + 1;
+        if (s) {
+          ws.getCell(rr, 2).value = s.school; ws.getCell(rr, 3).value = s.ban; ws.getCell(rr, 4).value = s.name; ws.getCell(rr, 5).value = blk.tag;
+        }
+      }
+      ['교시', '신청인원', null, '수강인원', null, '결석인원', null, null, '지도교사'].forEach(function (v, i) { if (v) ws.getCell(sr, i + 1).value = v; });
+      for (k = 1; k <= 4; k++) ws.getCell(sr + k, 1).value = k;
       ws.getRow(sr + 4).addPageBreak();
     });
     return wb;
