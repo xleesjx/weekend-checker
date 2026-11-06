@@ -155,8 +155,26 @@ const server = http.createServer((req, res) => {
   console.log('분반 블록:', parts.join(' | '));
   await page.click('[data-x=att-next]');
   await page.screenshot({ path: path.join(OUT, '7d-step4.png'), fullPage: true });
-  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-save]')]);
+  const dls = [];
+  const onDl = (d) => dls.push(d);
+  page.on('download', onDl);
+  await page.click('[data-x=att-save]');
+  for (let k = 0; k < 40 && dls.length < 2; k++) await page.waitForTimeout(250);
+  page.off('download', onDl);
+  if (dls.length < 2) throw new Error('출석부와 명렬표가 함께 내려받아지지 않음: ' + dls.length);
+  const dl = dls[0];
   await dl.saveAs(path.join(OUT, 'att1.xlsx'));
+  await dls[1].saveAs(path.join(OUT, 'contacts1.xlsx'));
+  {
+    const X = require(process.env.XLSX_PATH || 'xlsx');
+    const wb = X.readFile(path.join(OUT, 'contacts1.xlsx'));
+    const aoa = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+    const flat = aoa.map((r) => r.join('|'));
+    const waitRow = flat.findIndex((t) => /추가대기 \d+명/.test(t));
+    if (!flat.some((t) => /명렬표/.test(t)) || !flat.some((t) => /연락처/.test(t)) || waitRow < 0) throw new Error('명렬표 내용 이상');
+    if (!flat.some((t) => /010-0000-\d{4}/.test(t))) throw new Error('명렬표에 연락처 없음');
+    console.log('명렬표:', aoa.length + '줄, 추가대기 구역 있음, 첫 반 학생 ' + flat.slice(3).findIndex((t) => !/^\d+\|/.test(t)) + '명');
+  }
   await page.waitForSelector('[data-x=att-cancel]');
   await page.click('[data-x=att-cancel][data-i="0"]');
   const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-save2]')]);

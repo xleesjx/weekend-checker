@@ -392,8 +392,96 @@ var Roster = (function () {
     return wb;
   }
 
+  /* ───────── 연락처 명렬표 (들고 다니며 표시하는 용도) ───────── */
+
+  var CB_COLS = [['번호', 5.5], ['기관(학교)', 17], ['학년/반', 7.5], ['학생명', 9.5], ['신청자', 9.5], ['연락처', 15], ['출석', 7], ['메모', 17]];
+
+  function contactTitle(title) {
+    var t = str(title).replace(/\s*수강생\s*명단\s*$/, '');
+    return t + ' 명렬표';
+  }
+
+  /**
+   * blocks: [{ title, line, students:[{school, ban, name, parent, phone}], waits:[{school, ban, name, parent, phone}], waitLabel }]
+   * 학생은 출석부와 같은 이름순, 추가대기는 신청 순서 그대로
+   */
+  function buildContactBook(ExcelJS, blocks, sheetName) {
+    var wb = new ExcelJS.Workbook();
+    var ws = wb.addWorksheet(sheetName, {
+      properties: { defaultRowHeight: 16.5 },
+      pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+        margins: { left: 0.5, right: 0.4, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 } },
+      views: [{ zoomScale: 100 }]
+    });
+    CB_COLS.forEach(function (c, i) { ws.getColumn(i + 1).width = c[1]; });
+    var N = CB_COLS.length;
+    var thin = { style: 'thin', color: { argb: 'FF000000' } }, med = { style: 'medium', color: { argb: 'FF000000' } };
+    var font = function (size, bold) { return { name: FONT, size: size || 11, bold: !!bold, color: { argb: 'FF000000' }, charset: 129, family: 3 }; };
+    var fill = function (rgb) { return { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + rgb }, bgColor: { indexed: 64 } }; };
+    var r = 1;
+    var band = function (text, size, bg, height, bold) {
+      ws.mergeCellsWithoutStyle(r, 1, r, N);
+      for (var c = 1; c <= N; c++) {
+        var cell = ws.getCell(r, c);
+        cell.style = { font: font(size, bold), alignment: { horizontal: 'center', vertical: 'middle', wrapText: true },
+          border: { left: c === 1 ? med : undefined, right: c === N ? med : undefined, top: med, bottom: thin } };
+        if (bg) cell.style.fill = fill(bg);
+      }
+      ws.getCell(r, 1).value = text;
+      ws.getRow(r).height = height;
+      r++;
+    };
+    var head = function (labels) {
+      labels.forEach(function (h, i) {
+        var cell = ws.getCell(r, i + 1);
+        cell.value = h;
+        cell.style = { font: font(11, true), fill: fill('DBDBDB'), alignment: { horizontal: 'center', vertical: 'middle', wrapText: true },
+          border: { left: i === 0 ? med : thin, right: i === N - 1 ? med : thin, top: thin, bottom: thin } };
+      });
+      ws.getRow(r).height = 24;
+      r++;
+    };
+    var line = function (vals, last) {
+      vals.forEach(function (v, i) {
+        var cell = ws.getCell(r, i + 1);
+        if (v !== null && v !== undefined && v !== '') cell.value = v;
+        cell.style = { font: font(11, false), alignment: { horizontal: i === 7 ? 'left' : 'center', vertical: 'middle', wrapText: true },
+          border: { left: i === 0 ? med : thin, right: i === N - 1 ? med : thin, top: thin, bottom: last ? med : thin } };
+      });
+      ws.getRow(r).height = 26;
+      r++;
+    };
+    blocks.forEach(function (blk, bi) {
+      band(contactTitle(blk.title), 15, 'FFF2CC', 30, true);
+      band(blk.line, 11, 'FFF2CC', 22, true);
+      if (!blk.waitsOnly) {
+        head(CB_COLS.map(function (c) { return c[0]; }));
+        var list = byName(blk.students);
+        var rows = Math.max(list.length, 1);
+        for (var i = 0; i < rows; i++) {
+          var s = list[i];
+          line(s ? [i + 1, s.school, s.ban, s.name, s.parent, s.phone, '', ''] : ['', '', '', '(학생 없음)', '', '', '', ''], i === rows - 1);
+        }
+      }
+      if (blk.waits && blk.waits.length) {
+        if (!blk.waitsOnly) r++;
+        band('추가대기 ' + blk.waits.length + '명 · 신청 순서' + (blk.waitLabel ? ' · ' + blk.waitLabel : ''), 12, 'FDE9D9', 24, true);
+        head(['순서', '기관(학교)', '학년/반', '학생명', '신청자', '연락처', '연락', '메모']);
+        blk.waits.forEach(function (s, k) { line([k + 1, s.school, s.ban, s.name, s.parent, s.phone, '', ''], k === blk.waits.length - 1); });
+      }
+      if (bi < blocks.length - 1) { ws.getRow(r - 1).addPageBreak(); }
+    });
+    ws.pageSetup.printArea = 'A1:H' + Math.max(1, r - 1);
+    return wb;
+  }
+
+  function contactFileName(date, version) {
+    var md = date.slice(5, 7) + date.slice(8, 10);
+    return '명렬표_' + md + (version > 1 ? '_' + version + '차' : '') + '.xlsx';
+  }
+
   return {
-    CAP: CAP, officialSchool: officialSchool, normalizeBan: normalizeBan, sortStudents: sortStudents, students: students,
+    CAP: CAP, buildContactBook: buildContactBook, contactFileName: contactFileName, contactTitle: contactTitle, officialSchool: officialSchool, normalizeBan: normalizeBan, sortStudents: sortStudents, students: students,
     linkSets: linkSets, split: split, shortTools: shortTools, composeLine: composeLine, defaultSessions: defaultSessions,
     swapPair: swapPair, titleDate: titleDate, fileName: fileName, buildWorkbook: buildWorkbook, byName: byName, blockValues: blockValues, sheetHtml: sheetHtml,
     ROOMS: ROOMS, makeTitle: makeTitle, makeLine: makeLine, autoTag: autoTag, defaultBlock: defaultBlock, parseTitle: parseTitle, parseLine: parseLine, checkBlocks: checkBlocks

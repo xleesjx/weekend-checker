@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '17';
+  var APP_VERSION = '18';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -1085,7 +1085,7 @@
     } else {
       html += '<section class="card pad" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:17px">④ 확인·내려받기</b><div class="tbox"><table class="grid"><thead><tr><th>순서</th><th>제목</th><th>교실·교구</th><th>신청반</th><th>인원</th></tr></thead><tbody>' +
         A.blocks.map(function (b, i) { var s = srcByKey(b.src); return '<tr><td>' + (i + 1) + '</td><td>' + esc(Roster.makeTitle(S.date, b)) + '</td><td>' + esc(Roster.makeLine(b)) + '</td><td>' + esc(b.tag) + '</td><td>' + (s ? s.students.length : 0) + '명</td></tr>'; }).join('') +
-        '</tbody></table></div><p class="muted small" style="margin:0">확정하면 이 배정이 1차로 저장되고 엑셀이 내려받아집니다. 이후에는 분반을 다시 하지 않고 취소 처리·학생 추가만 합니다.</p></section>' +
+        '</tbody></table></div><p class="muted small" style="margin:0">확정하면 이 배정이 1차로 저장되고 출석부와 <b>연락처 명렬표</b>(학부모 이름·연락처 + 추가대기)가 함께 내려받아집니다. 이후에는 분반을 다시 하지 않고 취소 처리·학생 추가만 합니다.</p></section>' +
         navBar(true, '확정 저장 · ' + esc(Roster.fileName(S.date, 1)) + ' 내려받기', 'att-save');
     }
     return html;
@@ -1133,22 +1133,62 @@
       return { title: b.title, line: b.line, tag: b.tag, students: (b.students || []).filter(function (s) { return s.status !== '취소'; }) };
     });
     var wb = Roster.buildWorkbook(ExcelJS, blocks, mmdd(S.date));
-    return wb.xlsx.writeBuffer().then(function (buf) {
-      var blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = Roster.fileName(S.date, version);
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+    return wb.xlsx.writeBuffer().then(function (buf) { saveBlob(buf, Roster.fileName(S.date, version)); });
+  }
+
+  /** 학생 → 명렬표 줄 (학부모 이름·연락처는 원본 명단에서) */
+  function contactOf(s) {
+    var r = s.no ? rowByNo(s.no) : null;
+    return { school: s.school, ban: s.ban, name: s.name, parent: r ? Core.str(r.cells[2]) : '', phone: r ? Core.str(r.cells[3]) : '' };
+  }
+  function groupOfRow(r) { var c = clsInfo(r.cls); return c ? (c['수업반'] || c['접수명']) : r.cls; }
+
+  /** 연락처 명렬표: 출석부와 같은 반·같은 순서 + 반마다 추가대기(최신 명단 기준, 신청 순서) */
+  function downloadContacts(data, version) {
+    var schools = S.data.schools || [], idx = Core.buildSchoolIndex(schools);
+    var waitsBy = {};
+    S.data.rows.filter(function (r) { return !r.cancelled && Core.str(r.cells[12]) === '추가대기'; })
+      .sort(function (a, b) { return (a.seq - b.seq) || (+a.no - +b.no); })
+      .forEach(function (r) {
+        var it = Core.interpret(r.cells, idx), g = groupOfRow(r);
+        (waitsBy[g] = waitsBy[g] || []).push({
+          school: Core.officialSchool(it.school || it.home || r.cells[10], schools).name, ban: Core.normalizeBan(it.grade || r.cells[11]).ban,
+          name: it.name || Core.str(r.cells[9]), parent: Core.str(r.cells[2]), phone: Core.str(r.cells[3]) });
+      });
+    var all = data.blocks || [];
+    var gOf = function (b) { return String(b.key || '').split('#')[0]; };
+    var lastOf = {};
+    all.forEach(function (b, i) { lastOf[gOf(b)] = i; });
+    var blocks = all.map(function (b, i) {
+      var g = gOf(b);
+      var parts = all.filter(function (x) { return gOf(x) === g; }).length;
+      return { title: b.title, line: b.line,
+        students: (b.students || []).filter(function (s) { return s.status !== '취소'; }).map(contactOf),
+        waits: lastOf[g] === i ? (waitsBy[g] || []) : [], waitLabel: parts > 1 ? g + ' 공통' : '' };
     });
+    // 승인 학생이 없어 출석부에 없는 반도 추가대기는 따로 붙입니다
+    Object.keys(waitsBy).forEach(function (g) {
+      if (lastOf[g] === undefined) blocks.push({ title: md(S.date) + ' ' + g, line: '출석부에 없는 반 (승인된 학생 없음)', students: [], waitsOnly: true, waits: waitsBy[g], waitLabel: '' });
+    });
+    var wb = Roster.buildContactBook(ExcelJS, blocks, mmdd(S.date));
+    return wb.xlsx.writeBuffer().then(function (buf) { saveBlob(buf, Roster.contactFileName(S.date, version)); });
+  }
+
+  function saveBlob(buf, name) {
+    var blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
   }
 
   function saveAtt(data) {
     setBusy(true);
     return api('attSave', { date: S.date, data: data }).then(function (res) {
-      return downloadExcel(data, res.version).then(function () {
+      return downloadExcel(data, res.version).then(function () { return downloadContacts(data, res.version); }).then(function () {
         try { localStorage.removeItem(draftKey()); } catch (e) { /* 무시 */ }
-        toast(res.version + '차 출석부를 저장하고 ' + Roster.fileName(S.date, res.version) + ' 을 내려받았습니다.');
+        toast(res.version + '차 출석부를 저장하고 ' + Roster.fileName(S.date, res.version) + ', ' + Roster.contactFileName(S.date, res.version) + ' 을 내려받았습니다.');
         S.att = null;
         return load(S.date);
       });
@@ -1163,7 +1203,8 @@
     var A = S.att, blocks = A.data.blocks || [];
     var html = stepsBar(5, true) + '<section class="card pad row between" style="border-color:#86EFAC"><div><b style="font-size:17px">✔ ' + saved.version + '차 확정 · ' + esc(String(saved.at).slice(5, 16)) + ' · ' + esc(saved.by) + '</b>' +
       '<div class="muted small">확정 후에는 분반을 다시 하지 않습니다. 취소한 학생은 출석부에서 빠지고 결석 기록으로 넘어갑니다. 바꾼 내용은 [변경 저장]을 눌러야 다음 차수로 저장됩니다.</div></div>' +
-      '<div class="row"><button class="btn" data-x="att-redl">엑셀 다시 내려받기 (' + esc(Roster.fileName(S.date, saved.version)) + ')</button>' +
+      '<div class="row"><button class="btn" data-x="att-redl">출석부 다시 내려받기 (' + esc(Roster.fileName(S.date, saved.version)) + ')</button>' +
+      '<button class="btn" data-x="att-contacts" title="출석부와 같은 반·같은 순서에 학부모 이름·연락처를 넣고, 반마다 추가대기 학생(최신 명단 기준)을 붙인 명렬표">연락처 명렬표 내려받기 (' + esc(Roster.contactFileName(S.date, saved.version)) + ')</button>' +
       '<button class="btn primary" data-x="att-save2"' + (A.dirty ? '' : ' disabled') + '>변경 저장 · ' + esc(Roster.fileName(S.date, saved.version + 1)) + '</button>' +
       '<button class="btn" data-x="att-rebuild">처음부터 다시 만들기</button></div></section>';
     blocks.forEach(function (b, i) {
@@ -1257,6 +1298,7 @@
       saveAtt(draftData());
     }
     else if (x === 'att-redl') downloadExcel(S.data.att.data, S.data.att.version);
+    else if (x === 'att-contacts') downloadContacts(S.data.att.data, S.data.att.version).then(function () { toast('연락처 명렬표를 내려받았습니다. 추가대기는 지금 올라와 있는 최신 명단 기준입니다.'); });
     else if (x === 'att-save2') saveAtt(A.data);
     else if (x === 'att-rebuild') { if (confirm('저장된 출석부와 상관없이 처음부터 다시 분반합니다. 저장하기 전까지 기존 출석부는 그대로입니다. 계속할까요?')) buildDraft(); }
     else if (x === 'att-cancel') {
