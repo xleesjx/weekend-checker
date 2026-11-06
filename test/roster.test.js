@@ -71,4 +71,24 @@ ok(R.defaultSessions('기초 1,2반', 1, 2) === '기초2/기초1' && R.defaultSe
 ok(R.titleDate('10월 31일 주말SW프로그램 기초코딩 오전1반 수강생 명단', '2026-11-07') === '11월 7일 주말SW프로그램 기초코딩 오전1반 수강생 명단', '제목 날짜 바꾸기');
 ok(R.fileName('2026-11-07', 1) === '출석부_1107.xlsx' && R.fileName('2026-11-07', 2) === '출석부_1107_2차.xlsx', '파일 이름');
 
+// 반 설정
+const blk = { program: 'SW', name: '기초코딩 오전1반', room1: '라온실', room2: '놀이실', tool1: '스케치북', tool2: '3D펜' };
+ok(R.makeTitle('2026-11-07', blk) === '11월 7일 주말SW프로그램 기초코딩 오전1반 수강생 명단', '제목 만들기');
+ok(R.makeLine(blk) === '1-2교시 라온실, 3-4교시 놀이실(스케치북/3D펜)', '교실·교구 줄');
+ok(R.makeLine({ same: true, room1: '창의실', tool1: '네오싱카' }) === '1-4교시 창의실(네오싱카)', '1~4교시 같은 교실');
+[['기초코딩 오전1반', '기초1'], ['기초코딩 오전2반', '기초2'], ['탐험코딩 오전반', '탐험'], ['마스터코딩 오전반', '마스터'], ['오후3반', '3'], ['메이커1반', '메이커1']]
+  .forEach(([a, b]) => ok(R.autoTag(a) === b, '신청반 자동 ' + a + ' → ' + R.autoTag(a)));
+ok(R.defaultBlock('기초 1,2반', 1, 2, '오전', 2).name === '기초코딩 오전2반' && R.defaultBlock('창의 3,4반', 0, 2, '오후', 3).name === '오후3반' && R.defaultBlock('창의 3,4반', 0, 2, '오후', 3).program === '창의', '기본 반 이름');
+ok(R.parseTitle('10월 31일 주말SW프로그램 기초코딩 오전1반 수강생 명단 ').name === '기초코딩 오전1반', '예전 제목 읽기');
+const B = (o) => Object.assign({ program: 'SW', name: 'x', room1: '', room2: '', tool1: 't', tool2: 't', time: '오전', group: 'g' }, o);
+let ck = R.checkBlocks([B({ name: '기초코딩 오전1반', group: '기초', room1: '라온실', room2: '놀이실' }), B({ name: '기초코딩 오전2반', group: '기초', room1: '놀이실', room2: '라온실' }), B({ name: '탐험코딩 오전반', group: '탐험', same: true, room1: '창의실' })]);
+ok(!ck.errors.length && !ck.warns.length, '정상 반 설정: ' + JSON.stringify(ck));
+ck = R.checkBlocks([B({ name: '기초코딩 오전1반', group: '기초', room1: '라온실', room2: '놀이실' }), B({ name: '탐험코딩 오전반', group: '탐험', same: true, room1: '라온실' })]);
+ok(ck.errors.some((e) => /겹칩니다/.test(e.msg)), '같은 시간 같은 교실 겹침');
+ck = R.checkBlocks([B({ name: '기초코딩 오전1반', group: '기초', room1: '라온실', room2: '놀이실' }), B({ name: '기초코딩 오전2반', group: '기초', room1: '혜윰실', room2: '창의실' })]);
+ok(ck.warns.some((e) => /바뀌어/.test(e.msg)), '1반·2반 교실 순서 확인');
+ck = R.checkBlocks([B({ name: '오후1반', time: '오후', room1: '창의실', room2: '혜윰실' }), B({ name: '오후1반', time: '오후', room1: '놀이실', room2: '라온실' }), B({ name: '', time: '오후' })]);
+ok(ck.errors.some((e) => /제목이 같습니다/.test(e.msg)) && ck.errors.some((e) => /반 이름이 비어/.test(e.msg)) && ck.errors.some((e) => /교실을 골라/.test(e.msg)), '같은 제목·빈 칸');
+ok(!R.checkBlocks([B({ name: '기초코딩 오전1반', room1: '라온실', room2: '놀이실' }), B({ name: '오후1반', time: '오후', room1: '라온실', room2: '놀이실' })]).errors.length, '오전·오후는 같은 교실 써도 됨');
+
 console.log('출석부 테스트 ' + passed + '개 통과');

@@ -340,7 +340,11 @@ API.state = function (req, user) {
   var att = readAtt_();
   out.att = att.filter(function (a) { return a.date === date; }).pop() || null;
   out.attPrev = att.filter(function (a) { return a.date < date; }).pop() || null;
-  if (out.attPrev) out.attPrev = { date: out.attPrev.date, blocks: (out.attPrev.data.blocks || []).map(function (b) { return { key: b.key, title: b.title, sessions: b.sessions, rooms: b.rooms, line: b.line, tag: b.tag }; }) };
+  if (out.attPrev) out.attPrev = { date: out.attPrev.date, blocks: (out.attPrev.data.blocks || []).map(function (b) {
+    var o = {};
+    Object.keys(b).forEach(function (k) { if (k !== 'students') o[k] = b[k]; });
+    return o;
+  }) };
   out.schools = ctx.schools;
   out.groups = ctx.classes.map(function (c) { return { '수업반': c['수업반'], '접수명': c['접수명'], order: c.order, range: c.range }; });
   return out;

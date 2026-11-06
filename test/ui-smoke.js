@@ -109,27 +109,52 @@ const server = http.createServer((req, res) => {
   await page.click('[data-x=sel-link]');
   await page.click('[data-m=ok]');
   await page.waitForSelector('.badge.link');
-  // 예약취소 → 결석 기록에 보관
+  // 결석 표시 (예약취소 줄과 일반 줄)
   await page.click('[data-keepabs="260029"]');
-  await page.waitForFunction(() => document.body.textContent.includes('결석 기록됨'));
+  await page.waitForSelector('[data-keepabs="260029"].absent-on');
+  await page.click('[data-keepabs="260003"]');
+  await page.waitForSelector('[data-keepabs="260003"].absent-on');
   // 전체 명단 원본 내려받기
   const [rawDl] = await Promise.all([page.waitForEvent('download'), page.click('[data-act=raw-export]')]);
   await rawDl.saveAs(path.join(OUT, 'raw.xlsx'));
   // 결석 화면
   await page.click('[data-view=abs]');
+  const absCount = await page.$$eval('.abs-card', (c) => c.length);
+  if (absCount !== 2) throw new Error('결석 기록 수: ' + absCount);
   await page.click('[data-x=abs-reason][data-v="질병"]');
-  await page.waitForFunction(() => document.querySelector('.chipbtn.on') && document.querySelector('.chipbtn.on').textContent === '질병');
+  await page.waitForFunction(() => [...document.querySelectorAll('.chipbtn.on')].some((b) => b.textContent === '질병'));
   await page.screenshot({ path: path.join(OUT, '6-abs.png'), fullPage: true });
-  // 출석부
+  // 출석부: 단계별
   await page.click('[data-view=att]');
   await page.click('[data-x=att-start]');
-  await page.click('[data-m=go]');
-  await page.waitForSelector('.part');
-  const parts = await page.$$eval('.part-head', (hs) => hs.map((h) => h.textContent));
-  console.log('분반:', parts.join(' | '));
-  await page.waitForFunction(() => /수업을 읽었습니다/.test(document.body.textContent));
-  await page.screenshot({ path: path.join(OUT, '7-att-draft.png'), fullPage: true });
-  await page.check('[data-xc=att-check]');
+  await page.screenshot({ path: path.join(OUT, '7a-step1.png') });
+  await page.click('[data-x=att-next]');
+  // 교실을 고르지 않으면 넘어가지 않음
+  await page.click('[data-x=att-next]');
+  if (!(await page.$('.xl-t1 select'))) throw new Error('반 설정 화면이 아님');
+  const sel = async (i, f, v) => page.selectOption('[data-xc=att-b][data-i="' + i + '"][data-f=' + f + ']', v);
+  const typ = async (i, f, v) => page.fill('[data-xi=att-b][data-i="' + i + '"][data-f=' + f + ']', v);
+  await sel(0, 'room1', '라온실'); await sel(0, 'room2', '놀이실');
+  await sel(1, 'room1', '놀이실'); await sel(1, 'room2', '라온실');
+  await sel(2, 'room1', '라온실');
+  await page.click('[data-x=att-next]');
+  if (!(await page.textContent('body')).includes('겹칩니다')) throw new Error('교실 겹침 검사가 안 됨');
+  await sel(2, 'room1', '혜윰실');
+  await sel(3, 'room1', '창의실');
+  await typ(0, 'tool1', '스케치북'); await typ(0, 'tool2', '3D펜');
+  await typ(1, 'tool1', '3D펜'); await typ(1, 'tool2', '스케치북');
+  await typ(2, 'tool1', '파이썬'); await typ(3, 'tool1', '핏츠, 코너드');
+  await typ(0, 'name', '기초코딩 오전1반');
+  const tag0 = await page.inputValue('[data-xi=att-b][data-i="0"][data-f=tag]');
+  if (tag0 !== '기초1') throw new Error('신청반 자동: ' + tag0);
+  await page.screenshot({ path: path.join(OUT, '7b-step2.png'), fullPage: true });
+  await page.click('[data-x=att-next]');
+  await page.waitForSelector('.xl-tbl');
+  await page.screenshot({ path: path.join(OUT, '7c-step3.png'), fullPage: true });
+  const parts = await page.$$eval('section .row.between b', (bs) => bs.map((b) => b.textContent).filter((t) => /반|마스터/.test(t)));
+  console.log('분반 블록:', parts.join(' | '));
+  await page.click('[data-x=att-next]');
+  await page.screenshot({ path: path.join(OUT, '7d-step4.png'), fullPage: true });
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-save]')]);
   await dl.saveAs(path.join(OUT, 'att1.xlsx'));
   await page.waitForSelector('[data-x=att-cancel]');

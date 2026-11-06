@@ -152,3 +152,17 @@ tr.cut td { text-decoration: line-through; color: #94A3B8; }
 .chipbtn.on { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 700; }
 .abs-card { padding: 14px 16px; border-bottom: 1px solid var(--line2); display: flex; flex-direction: column; gap: 8px; }
 .abs-card.ex { background: #F8FAFC; }
+
+.xl { border: 2px solid #334155; background: #fff; }
+.xl-t1 { background: #FFF2CC; text-align: center; font-weight: 700; font-size: 18px; padding: 10px; border-bottom: 1px solid #334155; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; }
+.xl-t2 { background: #FFF2CC; text-align: center; font-weight: 700; font-size: 14px; padding: 10px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; border-bottom: 2px solid #334155; }
+.xl-t1 input, .xl-t1 select, .xl-t2 input, .xl-t2 select { font: inherit; font-weight: 700; border: 2px solid #1D4ED8; background: #fff; border-radius: 6px; padding: 2px 6px; min-height: 36px; }
+.xl-tbl { border-collapse: collapse; width: 100%; }
+.xl-tbl th { background: #DBDBDB; border: 1px solid #334155; font-size: 13px; padding: 6px; }
+.xl-tbl td { border: 1px solid #334155; font-size: 13px; padding: 2px 6px; text-align: center; height: 34px; }
+.xl-tbl tr.sep td { border-top: 2px solid #64748B; }
+.xl-tbl td.mv, .xl-tbl th.mv { border: 0; background: transparent; width: 48px; }
+.xl-tbl input.cellin { border: 1px solid transparent; background: transparent; width: 100%; text-align: center; font: inherit; font-size: 13px; min-height: 30px; padding: 2px 4px; box-sizing: border-box; border-radius: 4px; }
+.xl-tbl input.cellin:hover, .xl-tbl input.cellin:focus { border-color: #93B4F8; background: #fff; }
+.xl-tbl input.cellin.warn { background: #FFFAEB; border-color: #FDB022; }
+.btn.absent-on { background: #FEF3F2; border-color: var(--red); color: var(--red); font-weight: 700; }

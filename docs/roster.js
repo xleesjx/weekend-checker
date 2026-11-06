@@ -186,6 +186,82 @@ var Roster = (function () {
     return /\d+\s*월\s*\d+\s*일/.test(title) ? title.replace(/\d+\s*월\s*\d+\s*일/, md) : md + ' ' + title;
   }
 
+  /* ───────── 반 설정 (제목·교실·교구) ───────── */
+
+  var ROOMS = ['라온실', '혜윰실', '놀이실', '창의실', 'SW체험교실'];
+
+  function makeTitle(date, b) {
+    return (+date.slice(5, 7)) + '월 ' + (+date.slice(8, 10)) + '일 주말' + str(b.program) + '프로그램 ' + str(b.name) + ' 수강생 명단';
+  }
+
+  /** 다른 수업 사이는 '/', 같은 수업 안의 교구는 ',' */
+  function makeLine(b) {
+    if (b.same) return '1-4교시 ' + str(b.room1) + '(' + str(b.tool1) + ')';
+    return '1-2교시 ' + str(b.room1) + ', 3-4교시 ' + str(b.room2) + '(' + [str(b.tool1), str(b.tool2)].join('/') + ')';
+  }
+
+  /** 반 이름 → 신청반 표기: 기초코딩 오전1반 → 기초1, 탐험코딩 오전반 → 탐험, 오후3반 → 3, 메이커1반 → 메이커1 */
+  function autoTag(name) {
+    var t = norm(name), m;
+    if ((m = /^(.+?)코딩.*?(\d)반$/.exec(t))) return m[1].slice(0, 2) + m[2];
+    if ((m = /^(.+?)코딩/.exec(t))) return m[1];
+    if ((m = /^메이커(\d)/.exec(t))) return '메이커' + m[1];
+    if ((m = /^오[전후](\d)반$/.exec(t))) return m[1];
+    return t.replace(/반$/, '');
+  }
+
+  /** 지난 회차 값이 없을 때의 반 이름·프로그램 기본값 */
+  function defaultBlock(group, part, parts, time, seq) {
+    var g = norm(group);
+    var sw = /기초|탐험|마스터|도전/.test(g);
+    var name;
+    if (/기초/.test(g)) name = '기초코딩 ' + time + (parts > 1 ? (part + 1) : '') + '반';
+    else if (/탐험/.test(g)) name = '탐험코딩 ' + time + '반';
+    else if (/마스터/.test(g)) name = '마스터코딩 ' + time + '반';
+    else if (/메이커(\d)/.test(g)) name = '메이커' + /메이커(\d)/.exec(g)[1] + '반';
+    else name = time + seq + '반';
+    return { program: sw ? 'SW' : '창의', name: name, same: !(parts > 1), room1: '', room2: '', tool1: '', tool2: '' };
+  }
+
+  /** 예전 제목에서 프로그램·반 이름 읽기 */
+  function parseTitle(title) {
+    var m = /주말\s*(SW|창의)\s*프로그램\s*(.*?)\s*수강생\s*명단/.exec(str(title));
+    return m ? { program: m[1], name: m[2] } : null;
+  }
+
+  /**
+   * 반 설정 검사. blocks: [{key, time(오전/오후), group, program, name, room1, room2, same, tool1, tool2}]
+   * 반환: { errors: [{i, msg}], warns: [{i, msg}] }
+   */
+  function checkBlocks(blocks) {
+    var errors = [], warns = [];
+    var used = {}, titles = {};
+    blocks.forEach(function (b, i) {
+      if (!str(b.name)) errors.push({ i: i, msg: '반 이름이 비어 있습니다.' });
+      if (!str(b.room1) || (!b.same && !str(b.room2))) errors.push({ i: i, msg: '교실을 골라 주세요.' });
+      if (!str(b.tool1) || (!b.same && !str(b.tool2))) warns.push({ i: i, msg: '교구가 비어 있습니다.' });
+      var t = norm(b.program + b.name);
+      if (titles[t] !== undefined) errors.push({ i: i, msg: (titles[t] + 1) + '번 반과 제목이 같습니다.' }); else titles[t] = i;
+      [[1, b.room1], [2, b.same ? b.room1 : b.room2]].forEach(function (x) {
+        if (!str(x[1])) return;
+        var k = b.time + '|' + x[0] + '|' + x[1];
+        if (used[k] !== undefined) errors.push({ i: i, msg: b.time + ' ' + (x[0] === 1 ? '1-2교시' : '3-4교시') + ' ' + x[1] + '이(가) ' + (used[k] + 1) + '번 반과 겹칩니다.' });
+        else used[k] = i;
+      });
+    });
+    // 한 반을 둘로 나눈 경우 교실이 서로 바뀌어 있는지
+    var byGroup = {};
+    blocks.forEach(function (b, i) { (byGroup[b.group] = byGroup[b.group] || []).push(i); });
+    Object.keys(byGroup).forEach(function (g) {
+      var ix = byGroup[g];
+      if (ix.length !== 2) return;
+      var a = blocks[ix[0]], c = blocks[ix[1]];
+      if (a.same || c.same || !a.room1 || !c.room1) return;
+      if (a.room1 !== c.room2 || a.room2 !== c.room1) warns.push({ i: ix[1], msg: (ix[0] + 1) + '번 반과 교실 순서가 서로 바뀌어 있지 않습니다 (보통 1반 ' + a.room1 + '→' + a.room2 + ', 2반 ' + a.room2 + '→' + a.room1 + ').' });
+    });
+    return { errors: errors, warns: warns };
+  }
+
   function fileName(date, version) {
     var md = date.slice(5, 7) + date.slice(8, 10);
     return '출석부_' + md + (version > 1 ? '_' + version + '차' : '') + '.xlsx';
@@ -271,7 +347,8 @@ var Roster = (function () {
   return {
     CAP: CAP, officialSchool: officialSchool, normalizeBan: normalizeBan, sortStudents: sortStudents, students: students,
     linkSets: linkSets, split: split, shortTools: shortTools, composeLine: composeLine, defaultSessions: defaultSessions,
-    swapPair: swapPair, titleDate: titleDate, fileName: fileName, buildWorkbook: buildWorkbook
+    swapPair: swapPair, titleDate: titleDate, fileName: fileName, buildWorkbook: buildWorkbook,
+    ROOMS: ROOMS, makeTitle: makeTitle, makeLine: makeLine, autoTag: autoTag, defaultBlock: defaultBlock, parseTitle: parseTitle, checkBlocks: checkBlocks
   };
 })();
 

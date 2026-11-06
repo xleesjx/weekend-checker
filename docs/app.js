@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '10';
+  var APP_VERSION = '11';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -487,8 +487,8 @@
   function fullTableHtml() {
     var cols = visibleCols();
     var q = S.query.trim();
-    var colgroup = '<colgroup><col style="width:36px">' + cols.map(function (i) { return '<col style="width:' + WIDTH[i] + 'px">'; }).join('') + '<col style="width:210px"><col style="width:130px"></colgroup>';
-    var total = cols.reduce(function (a, i) { return a + WIDTH[i]; }, 0) + 376;
+    var colgroup = '<colgroup><col style="width:36px">' + cols.map(function (i) { return '<col style="width:' + WIDTH[i] + 'px">'; }).join('') + '<col style="width:200px"><col style="width:150px"></colgroup>';
+    var total = cols.reduce(function (a, i) { return a + WIDTH[i]; }, 0) + 386;
     var letters = linkLetters();
     var absNos = {};
     (S.data.absences || []).forEach(function (a) { if (a.no) absNos[a.no] = true; });
@@ -519,7 +519,8 @@
           var resultHtml = (r.isNew ? '<span class="badge new">새로 들어옴</span> ' : '') + (!r.cancelled && !r.issues.length ? '<span class="badge ok">이상 없음</span>' : '<b>' + esc(result) + '</b>');
           var act = active ? '<button class="btn sm" data-expand="' + esc(r.no) + '">' + (S.open === r.no ? '닫기' : '처리') + '</button>' :
             (r.status ? '<span class="small muted">' + (r.status.s === 'ok' ? '문제없음' : '완료') + ' · ' + esc(r.status.who) + '</span>' : '');
-          if (r.cancelled) act = absNos[r.no] ? '<span class="small muted">결석 기록됨</span>' : '<button class="btn sm" data-keepabs="' + esc(r.no) + '" title="기한 후 취소 등으로 결석 기록에 남깁니다">결석 기록에 보관</button>';
+          if (r.cancelled) act = '';
+          act += ' <button class="btn sm' + (absNos[r.no] ? ' absent-on' : '') + '" data-keepabs="' + esc(r.no) + '" title="' + (absNos[r.no] ? '결석 표시 해제' : '결석으로 표시하고 결석 기록에 넣습니다') + '">' + (absNos[r.no] ? '결석 ✓' : '결석') + '</button>';
           var lt = letters[r.no] ? { 9: '<span class="badge link">🔗' + esc(letters[r.no]) + '</span>' } : null;
           body += '<tr class="' + trc + '"><td><input type="checkbox" class="selbox" data-sel="' + esc(r.no) + '" aria-label="선택"' + (S.sel[r.no] ? ' checked' : '') + ' style="width:18px;height:18px"></td>' + dataCells(r, cols, hl, lt) + '<td class="chk" title="' + esc(r.issues.map(function (i) { return i.detail; }).join(' / ')) + '">' + resultHtml + '</td><td>' + act + '</td></tr>';
           if (active && S.open === r.no) {
@@ -787,55 +788,43 @@
       .catch(function (er) { toast(er.message); }).then(function (r) { setBusy(false); return r; });
   }
 
-  function keepAbsence(no) {
+  function absOf(no) { return (S.data.absences || []).filter(function (a) { return a.no === no; })[0]; }
+
+  /** 전체 명단의 [결석] 버튼: 표시하면 결석 기록에 넣고, 다시 누르면 해제합니다 */
+  function toggleAbsence(no) {
     var r = rowByNo(no);
     if (!r) return;
-    saveAbs({ date: S.date, no: r.no, name: r.cells[9], school: r.cells[10], ban: r.cells[11], cls: r.cls, phone: r.cells[3], src: '전체 명단에서 보관', reason: '기한 후 취소' })
-      .then(function () { toast(r.cells[9] + ' 학생을 결석 기록에 보관했습니다.'); });
-  }
-
-  function absRoster() {
-    var saved = S.data.att;
-    if (saved && saved.data && saved.data.blocks) {
-      var out = [];
-      saved.data.blocks.forEach(function (b) { (b.students || []).forEach(function (s) { if (s.status !== '취소') out.push({ no: s.no, name: s.name, school: s.school, ban: s.ban, cls: b.tag || b.title, group: b.title }); }); });
-      return out;
+    var a = absOf(no);
+    if (a) {
+      if (!confirm(r.cells[9] + ' 학생의 결석 표시를 해제할까요? 사유와 메모도 함께 지워집니다.')) return;
+      setBusy(true);
+      api('absDelete', { id: a.id }).then(function () { return load(S.date); }).catch(function (er) { toast(er.message); }).then(function () { setBusy(false); });
+      return;
     }
-    return Roster.students(S.data.rows, S.data.schools || []).map(function (s) { return { no: s.no, name: s.name, school: s.school, ban: s.ban, cls: s.cls, group: s.cls }; });
-  }
-
-  function absSideHtml() {
-    var q = (S.absq || '').trim();
-    var have = {};
-    (S.data.absences || []).forEach(function (a) { have[a.no || a.name] = true; });
-    var list = absRoster().filter(function (s) { return !have[s.no || s.name] && (!q || (s.name + s.school).indexOf(q) >= 0); });
-    S.absSide = list;
-    var html = '', prev = null;
-    list.forEach(function (s, k) {
-      if (s.group !== prev) { html += '<div class="small" style="font-weight:700;margin-top:6px">' + esc(s.group) + '</div>'; prev = s.group; }
-      html += '<button class="btn" style="text-align:left;justify-content:flex-start" data-x="abs-add" data-k="' + k + '">' + esc(s.name) + ' · ' + esc(s.school) + ' ' + esc(s.ban) + '</button>';
-    });
-    return html || '<p class="muted small">해당하는 학생이 없습니다.</p>';
+    saveAbs({ date: S.date, no: r.no, name: r.cells[9], school: r.cells[10], ban: r.cells[11], cls: r.cls, phone: r.cells[3],
+      src: r.cancelled ? '예약취소' : '당일 결석', reason: r.cancelled ? '기한 후 취소' : '당일 무단결석' })
+      .then(function () { toast(r.cells[9] + ' 학생을 결석으로 표시했습니다. 사유는 결석 메뉴에서 고칠 수 있습니다.', 3000); });
   }
 
   function viewAbs() {
     var recs = S.data.absences || [];
     var limited = recs.filter(function (a) { return !a.excused; }).length;
     var next = Core.nextClassDate(S.data.dates || [], S.date);
-    var html = '<section class="card pad row between"><div class="row">' + roundSelect() + '</div><span class="muted small">결석·취소 ' + recs.length + '건 · 다음 수업일' + (next ? '(' + Core.shortDate(next) + ')' : '') + ' 신청 제한 <b>' + limited + '</b>명 · 출석 인정 ' + (recs.length - limited) + '명 ' +
-      tip('결석 기록은 기본으로 다음 수업일 신청 제한입니다. 「출석 인정」에 체크하면 제한이 풀립니다. 출석부에서 취소 처리한 학생과 전체 명단에서 보관한 예약취소 학생도 여기에 모입니다.') + '</span></section>';
-    html += '<div class="row" style="align-items:flex-start;gap:16px">';
-    html += '<section class="card" style="flex:999 1 520px;min-width:0;overflow:hidden">' + (recs.length ? recs.map(function (a) {
+    var html = '<section class="card pad row between"><div class="row">' + roundSelect() + '</div><span class="muted small">결석·취소 ' + recs.length + '건 · 다음 수업일' + (next ? '(' + Core.shortDate(next) + ')' : '') + ' 신청 제한 <b>' + limited + '</b>명 · 출석 인정 ' + (recs.length - limited) + '명</span></section>' +
+      '<section class="card pad small" style="line-height:1.9;background:#F8FAFF;border-color:#BFD0F5"><b style="font-size:15px">결석자 처리 방법</b><br>' +
+      '① <b>전체 명단</b>에서 빠른 필터 <b>예약취소</b>를 누르고, 기한 후 취소한 학생 줄의 <b>[결석]</b>을 누릅니다.<br>' +
+      '② 수업 당일 결석한 학생도 <b>전체 명단</b>에서 그 학생 줄의 <b>[결석]</b>을 누릅니다. (출석부에서 [취소 처리]한 학생은 자동으로 들어옵니다)<br>' +
+      '③ 여기서 <b>사유</b>를 고르고 연락한 내용을 <b>메모</b>합니다. 질병·대회 등으로 봐 줄 경우 <b>출석 인정</b>에 체크하면 다음 회차 신청 제한이 풀립니다.<br>' +
+      '<span class="muted">출석 인정이 아닌 학생은 다음 수업일 점검에서 「신청 제한 학생」으로 표시됩니다.</span></section>';
+    html += '<section class="card" style="overflow:hidden">' + (recs.length ? recs.map(function (a) {
       return '<div class="abs-card' + (a.excused ? ' ex' : '') + '"><div class="row"><b style="font-size:16px">' + esc(a.name) + '</b><span>' + esc(a.school) + ' · ' + esc(a.ban) + ' · ' + esc(a.cls) + '</span>' +
         '<span class="badge done">' + esc(a.src || '당일 결석') + '</span>' + (a.phone ? '<a href="tel:' + esc(String(a.phone).replace(/[^0-9]/g, '')) + '" style="margin-left:auto">' + esc(a.phone) + '</a>' : '') + '</div>' +
         '<div class="row" style="gap:6px">' + REASONS.map(function (rs) { return '<button class="chipbtn' + (a.reason === rs ? ' on' : '') + '" data-x="abs-reason" data-id="' + esc(a.id) + '" data-v="' + esc(rs) + '">' + esc(rs) + '</button>'; }).join('') + '</div>' +
         '<div class="row small"><label class="row" style="gap:6px">취소 시각 <input type="text" value="' + esc(a.cancelAt) + '" placeholder="예: 11/6 18:20" data-xc="abs-field" data-id="' + esc(a.id) + '" data-f="cancelAt" style="width:140px"></label>' +
         '<label class="row" style="gap:6px;margin-left:auto;font-weight:700;min-height:36px"><input type="checkbox" data-xc="abs-ex" data-id="' + esc(a.id) + '"' + (a.excused ? ' checked' : '') + ' style="width:18px;height:18px">출석 인정 (신청 제한 안 함)</label></div>' +
-        '<div class="row"><input type="text" value="' + esc(a.memo) + '" placeholder="메모" data-xc="abs-field" data-id="' + esc(a.id) + '" data-f="memo" style="flex:1"><button class="btn sm" data-x="abs-del" data-id="' + esc(a.id) + '">기록 삭제</button></div>' +
+        '<div class="row"><input type="text" value="' + esc(a.memo) + '" placeholder="메모 (예: 오후 2시 통화, 독감)" data-xc="abs-field" data-id="' + esc(a.id) + '" data-f="memo" style="flex:1"><button class="btn sm" data-x="abs-del" data-id="' + esc(a.id) + '">기록 삭제</button></div>' +
         '<span class="muted small">' + esc(a.by) + ' · ' + esc(String(a.at).slice(5, 16)) + '</span></div>';
     }).join('') : '<div class="pad muted">이 수업일의 결석·취소 기록이 없습니다.</div>') + '</section>';
-    html += '<aside class="card pad" style="flex:1 1 300px;max-width:420px;display:flex;flex-direction:column;gap:6px"><b>당일 결석 추가</b><span class="muted small">' + (S.data.att ? '확정된 출석부 명단입니다.' : '승인된 신청자 명단입니다 (출석부를 확정하면 출석부 명단으로 바뀝니다).') + ' 결석한 학생을 누르면 기록에 추가됩니다.</span>' +
-      '<input type="search" placeholder="학생명 · 학교" value="' + esc(S.absq || '') + '" data-xi="absq" aria-label="학생 찾기"><div id="abs-side" style="display:flex;flex-direction:column;gap:6px">' + absSideHtml() + '</div></aside></div>';
     return html;
   }
 
@@ -898,71 +887,49 @@
 
   function srcByKey(k) { return (S.att.sources || []).filter(function (s) { return s.key === k; })[0]; }
 
-  function defaultTag(src) {
-    var base = src.group.replace(/\s+/g, '').replace(/반$/, '').replace(/\d.*$/, '');
-    return base + (src.parts > 1 ? String(src.part + 1) : '');
+  function groupTime(g) {
+    var c = (S.data.classes || []).filter(function (x) { return (x['수업반'] || x['접수명']) === g; })[0];
+    return c ? c['시간대'] : '';
   }
 
   function makeBlocks() {
     var A = S.att;
     var prev = (S.data.attPrev && S.data.attPrev.blocks) || [];
+    var seq = {};
     A.blocks = A.sources.map(function (src) {
+      var time = groupTime(src.group);
+      seq[time] = (seq[time] || 0) + 1;
+      var d = Roster.defaultBlock(src.group, src.part, src.parts, time, seq[time]);
       var p = prev.filter(function (b) { return b.key === src.key; })[0];
-      return {
-        key: src.key, src: src.key,
-        title: p ? Roster.titleDate(p.title, S.date) : md(S.date) + ' ' + src.label.replace(' · ', ' ') + ' 수강생 명단',
-        sessions: p ? p.sessions : Roster.defaultSessions(src.group, src.part, src.parts),
-        rooms: p ? p.rooms : '', line: p ? p.line : '', tag: p ? p.tag : defaultTag(src), lineEdited: false
-      };
+      var b = { key: src.key, src: src.key, group: src.group, time: time, label: src.label, tool1: '', tool2: '' };
+      if (p) {
+        var pt = p.program ? p : (Roster.parseTitle(p.title) || {});
+        b.program = pt.program || d.program; b.name = pt.name || d.name;
+        b.same = p.same !== undefined ? !!p.same : d.same;
+        b.room1 = p.room1 || ''; b.room2 = p.room2 || '';
+        b.tagEdited = !!p.tagEdited; b.tag = b.tagEdited ? p.tag : Roster.autoTag(b.name);
+      } else {
+        Object.assign(b, d);
+        b.tag = Roster.autoTag(b.name); b.tagEdited = false;
+      }
+      return b;
     });
-    A.blocks.forEach(function (b) { recompose(b); });
-  }
-
-  function recompose(b) {
-    var tools = (S.att && S.att.tools) || {};
-    b.line = Roster.composeLine(b.sessions, b.rooms, tools);
-    b.lineEdited = false;
-  }
-
-  function fetchTopics() {
-    var A = S.att;
-    api('topics', { date: S.date }).then(function (res) {
-      if (!S.att || S.att !== A) return;
-      A.topicErr = res.error || '';
-      A.topics = res.items || [];
-      A.tools = {}; A.generic = {};
-      A.topics.forEach(function (it) {
-        var t = Roster.shortTools(it.tools);
-        var k = String(it.cls).replace(/\s+/g, '');
-        A.tools[k] = t.text; A.generic[k] = t.generic;
-      });
-      A.blocks.forEach(function (b) { if (!b.lineEdited) recompose(b); });
-      if (S.view === 'att') render();
-    }).catch(function (er) { A.topicErr = er.message; if (S.view === 'att') render(); });
   }
 
   function buildDraft() {
     var old = S.att || {};
-    S.att = { mode: 'draft', date: S.date, acceptKeep: old.acceptKeep || {}, edits: old.edits || {}, checked: false, topics: null, topicErr: '', tools: {} };
+    S.att = { mode: 'draft', date: S.date, step: 1, acceptKeep: old.acceptKeep || {}, edits: old.edits || {} };
     computeParts();
     makeBlocks();
-    fetchTopics();
     render();
+    window.scrollTo(0, 0);
   }
 
-  function attProblems() {
+  function blockChecks() { return Roster.checkBlocks(S.att.blocks); }
+
+  function splitProblems() {
     var A = S.att, out = [];
-    var used = {};
-    A.blocks.forEach(function (b, i) {
-      if (!b.src) out.push((i + 1) + '번 블록에 연결된 명단이 없습니다.');
-      else if (used[b.src]) out.push('「' + srcByKey(b.src).label + '」 명단이 두 블록에 연결되어 있습니다.');
-      used[b.src] = true;
-      var s = b.src && srcByKey(b.src);
-      if (s && s.students.length > Roster.CAP) out.push((i + 1) + '번 블록이 ' + s.students.length + '명입니다 (16명 이하).');
-      if (!Core.str(b.title)) out.push((i + 1) + '번 블록 제목이 비어 있습니다.');
-    });
-    A.sources.forEach(function (s) { if (!used[s.key]) out.push('「' + s.label + '」 명단이 어느 블록에도 연결되지 않았습니다.'); });
-    // 같은 반 요청이 나뉘었는지
+    A.sources.forEach(function (s) { if (s.students.length > Roster.CAP) out.push('「' + s.label + '」이 ' + s.students.length + '명입니다. 한 반은 16명 이하여야 합니다.'); });
     (A.sets || []).forEach(function (set) {
       var where = {};
       A.sources.forEach(function (s) { s.students.forEach(function (st) { if (set.nos.indexOf(st.no) >= 0) where[s.key] = true; }); });
@@ -971,121 +938,119 @@
     return out;
   }
 
-  function stepsBar(n) {
-    var names = ['최신 명단 확인', '분반', '반 설정·연결', '미리보기', '확정·내려받기'];
-    return '<section class="card pad row" style="gap:10px 22px">' + names.map(function (t, i) {
-      var on = i + 1 === n, done = i + 1 < n;
-      return '<span class="row small" style="gap:6px"><span class="badge" style="background:' + (on ? 'var(--blue);color:#fff' : (done ? '#C7D7FB;color:#1E3A8A' : '#E2E8F0;color:#334155')) + '">' + (i + 1) + '</span>' + (on ? '<b>' + t + '</b>' : t) + '</span>';
-    }).join('') + '</section>';
+  var STEPS = ['최신 명단 확인', '반 설정', '분반·학교명 정리', '확인·내려받기'];
+
+  function stepsBar(n, saved) {
+    return '<section class="card pad row" style="gap:10px 22px">' + STEPS.map(function (t, i) {
+      var k = i + 1, on = !saved && k === n, done = saved || k < n;
+      var chip = '<span class="badge" style="background:' + (on ? 'var(--blue);color:#fff' : (done ? '#C7D7FB;color:#1E3A8A' : '#E2E8F0;color:#334155')) + '">' + k + '</span>' + (on ? '<b>' + t + '</b>' : t);
+      return !saved && k < n ? '<button class="row small sorth" style="gap:6px" data-x="att-step" data-n="' + k + '">' + chip + '</button>' : '<span class="row small" style="gap:6px">' + chip + '</span>';
+    }).join('') + (saved ? '<b class="small" style="color:#15803D">✔ 확정됨</b>' : '') + '</section>';
   }
 
-  function sheetPreview(b, students) {
-    var rows = students.map(function (s, i) {
-      return '<tr' + (s.status === '취소' ? ' class="cut"' : '') + '><td>' + (i + 1) + '</td><td>' + esc(s.school) + '</td><td>' + esc(s.ban) + '</td><td>' + esc(s.name) + '</td><td>' + esc(b.tag) + '</td><td></td><td></td><td></td><td></td><td></td></tr>';
-    }).join('');
-    return '<div class="sheet"><div class="t1">' + esc(b.title) + '</div><div class="t2">' + esc(b.line) + '</div>' +
-      '<table><thead><tr><th rowspan="2">번호</th><th rowspan="2">기관(학교)</th><th rowspan="2">학년/반</th><th rowspan="2">신청자</th><th rowspan="2">신청반</th><th colspan="4">출석여부</th><th rowspan="2">비고</th></tr><tr><th>1교시</th><th>2교시</th><th>3교시</th><th>4교시</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  function navBar(prev, nextLabel, nextAct) {
+    return '<div class="row" style="justify-content:space-between;margin-top:4px">' + (prev ? '<button class="btn" data-x="att-prev">← 이전</button>' : '<span></span>') +
+      (nextLabel ? '<button class="btn primary" data-x="' + (nextAct || 'att-next') + '">' + nextLabel + '</button>' : '') + '</div>';
   }
 
-  function viewAtt() {
-    var saved = S.data.att;
-    if (S.att && S.att.date !== S.date) S.att = null;
-    if (S.att && S.att.mode === 'draft') return viewAttDraft();
-    if (saved) return viewAttSaved(saved);
-    return stepsBar(1) + '<section class="card pad" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:17px">' + esc(md(S.date)) + ' 출석부 만들기</b>' +
-      '<p class="muted" style="margin:0">승인된 신청자만으로 출석부를 만듭니다. 학교명은 정식 이름, 학반은 3-2 형식으로 정리하고, 학교·이름순으로 정렬한 뒤 16명이 넘는 반은 두 반으로 나눕니다.</p>' +
-      '<div><button class="btn primary" data-x="att-start">출석부 만들기 시작</button></div></section>';
+  function roomSelect(i, f, v) {
+    return '<select data-xc="att-b" data-i="' + i + '" data-f="' + f + '" aria-label="교실"><option value="">교실 선택</option>' +
+      Roster.ROOMS.map(function (r) { return '<option' + (r === v ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select>';
   }
 
-  function startAtt() {
-    var lastAt = (S.data.classes || []).map(function (c) { return c.lastAt ? c.lastAt + ' · ' + c.lastBy : ''; }).filter(Boolean).sort().pop() || '아직 없음';
-    var red = openRows('red').length;
-    var waiting = S.data.rows.filter(function (r) { return !r.cancelled && r.cells[12] === '대기'; }).length;
-    var html = '<h2 style="margin:0">⚠ 출석부를 만들기 전에 확인해 주세요</h2><div style="line-height:1.9">' +
-      '· 마지막 명단 업로드: <b>' + esc(lastAt.slice(5)) + '</b><br>&nbsp;&nbsp;→ 통합예약시스템 관리자 페이지에서 <b>최신 명단을 받아 다시 올렸나요?</b><br>' +
-      '· 아직 처리하지 않은 <b style="color:var(--red)">취소 대상 ' + red + '건</b><br>' +
-      '· 승인 안 된 대기자 <b>' + waiting + '명</b> (출석부에서 빠집니다)</div>' +
-      '<div class="row" style="justify-content:flex-end"><button class="btn" data-m="home">명단 올리러 가기</button><button class="btn primary" data-m="go">그대로 만들기</button></div>';
-    modal(html, function (m, b, w, close) {
-      close();
-      if (m === 'home') { S.view = 'home'; render(); window.scrollTo(0, 0); }
-      else buildDraft();
+  function blockCard(b, i, ck) {
+    var errs = ck.errors.filter(function (e) { return e.i === i; }), warns = ck.warns.filter(function (e) { return e.i === i; });
+    var head = '<div class="xl-t1"><span>' + esc(md(S.date)) + ' 주말</span><select data-xc="att-b" data-i="' + i + '" data-f="program" aria-label="프로그램"><option' + (b.program === 'SW' ? ' selected' : '') + '>SW</option><option' + (b.program === '창의' ? ' selected' : '') + '>창의</option></select>' +
+      '<span>프로그램</span><input type="text" value="' + esc(b.name) + '" data-xi="att-b" data-i="' + i + '" data-f="name" aria-label="반 이름" placeholder="예: 기초코딩 오전1반" style="width:220px"><span>수강생 명단</span></div>';
+    var line = '<div class="xl-t2">' + (b.same ? '<span>1-4교시</span>' + roomSelect(i, 'room1', b.room1) : '<span>1-2교시</span>' + roomSelect(i, 'room1', b.room1) + '<span>, 3-4교시</span>' + roomSelect(i, 'room2', b.room2)) +
+      '<span>(</span><input type="text" value="' + esc(b.tool1) + '" data-xi="att-b" data-i="' + i + '" data-f="tool1" aria-label="' + (b.same ? '교구' : '1-2교시 교구') + '" placeholder="' + (b.same ? '교구' : '1-2교시 교구') + '" style="width:170px">' +
+      (b.same ? '' : '<span>/</span><input type="text" value="' + esc(b.tool2) + '" data-xi="att-b" data-i="' + i + '" data-f="tool2" aria-label="3-4교시 교구" placeholder="3-4교시 교구" style="width:170px">') + '<span>)</span></div>';
+    return '<section class="card pad" style="display:flex;flex-direction:column;gap:10px' + (errs.length ? ';border-color:var(--red)' : '') + '"><div class="row between"><b>' + (i + 1) + '. ' + esc(b.label) + '</b><span class="muted small">' + esc(b.time) + ' · ' + (srcByKey(b.src) ? srcByKey(b.src).students.length : 0) + '명</span></div>' +
+      '<div class="xl">' + head + line + '</div>' +
+      '<div class="row small"><label class="row" style="gap:6px;min-height:36px"><input type="checkbox" data-xc="att-b" data-i="' + i + '" data-f="same"' + (b.same ? ' checked' : '') + ' style="width:18px;height:18px">1~4교시 같은 교실</label>' +
+      '<span class="muted">신청반 표기</span><input type="text" value="' + esc(b.tag) + '" data-xi="att-b" data-i="' + i + '" data-f="tag" aria-label="신청반 표기" style="width:90px"><span class="muted">(반 이름에서 자동)</span></div>' +
+      '<div class="small muted">인쇄될 내용: <span id="pv-' + i + '">' + esc(Roster.makeTitle(S.date, b)) + ' / ' + esc(Roster.makeLine(b)) + '</span></div>' +
+      '<div id="ck-' + i + '">' + checkMsgs(errs, warns) + '</div></section>';
+  }
+
+  function checkMsgs(errs, warns) {
+    return (errs.length ? '<div class="small" style="color:var(--red)">' + errs.map(function (e) { return '⚠ ' + esc(e.msg); }).join('<br>') + '</div>' : '') +
+      (warns.length ? '<div class="small" style="color:var(--amber)">' + warns.map(function (e) { return '확인: ' + esc(e.msg); }).join('<br>') + '</div>' : '');
+  }
+
+  function sheetBlock(b, i, letters) {
+    var src = srcByKey(b.src);
+    var list = src ? src.students : [];
+    var over = list.length > Roster.CAP;
+    var html = '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><b>' + esc(b.label) + '</b><span style="font-weight:700;color:' + (over ? 'var(--red)' : 'inherit') + '">' + list.length + '명' + (over ? ' ⚠ 16명 초과' : '') +
+      (src && src.multi && src.parts > 1 ? ' · 1학년 ' + list.filter(function (s) { return s.grade1; }).length + '명' : '') + '</span></div>' +
+      '<div class="tbox"><div class="xl" style="min-width:620px"><div class="xl-t1">' + esc(Roster.makeTitle(S.date, b)) + '</div><div class="xl-t2">' + esc(Roster.makeLine(b)) + '</div>' +
+      '<table class="xl-tbl"><thead><tr><th style="width:52px">번호</th><th>기관(학교)</th><th style="width:90px">학년/반</th><th style="width:110px">신청자</th><th style="width:80px">신청반</th><th style="width:120px">비고</th>' + (src && src.parts > 1 ? '<th class="mv"></th>' : '') + '</tr></thead><tbody>';
+    var prev = '';
+    list.forEach(function (s, k) {
+      html += '<tr' + (prev && prev !== s.school ? ' class="sep"' : '') + '><td>' + (k + 1) + '</td>' +
+        '<td><input type="text" class="cellin' + (s.schoolOk ? '' : ' warn') + '" value="' + esc(s.school) + '" data-xi="att-edit" data-no="' + esc(s.no) + '" data-f="school" aria-label="학교명"></td>' +
+        '<td><input type="text" class="cellin' + (s.banOk ? '' : ' warn') + '" value="' + esc(s.ban) + '" data-xi="att-edit" data-no="' + esc(s.no) + '" data-f="ban" aria-label="학반"></td>' +
+        '<td>' + esc(s.name) + '</td><td>' + esc(b.tag) + '</td><td>' + (letters[s.no] ? '<span class="badge link">🔗' + letters[s.no] + '</span> ' : '') + (s.grade1 && src.multi ? '<span class="badge amber">1학년</span>' : '') + '</td>' +
+        (src.parts > 1 ? '<td class="mv"><button class="btn sm" data-x="att-move" data-key="' + esc(src.key) + '" data-no="' + esc(s.no) + '" title="다른 반으로 옮기기" aria-label="다른 반으로 옮기기">⇄</button></td>' : '') + '</tr>';
+      prev = s.school;
     });
+    return html + '</tbody></table></div></div></section>';
   }
 
   function viewAttDraft() {
     var A = S.att;
-    var letters = {};
-    (A.sets || []).forEach(function (set, k) { set.nos.forEach(function (no) { letters[no] = String.fromCharCode(65 + (k % 26)); }); });
-    var html = stepsBar(A.checked ? 4 : 2);
-    if (A.errors.length) html += '<section class="card pad" style="border-color:#FECDCA;background:var(--red-bg)">' + A.errors.map(esc).join('<br>') + '</section>';
-
-    // 같은 반 요청
-    var dl = dateLinks();
-    html += '<section class="card pad" style="display:flex;flex-direction:column;gap:6px;background:#FAF7FF;border-color:#DDD6FE"><b>같은 반 요청</b>' + (dl.length ? dl.map(function (x) {
-      var g = x.g;
-      var label = g.members.map(function (m) { return esc(m.name) + '(' + esc(m.school) + ')'; }).join(' + ');
-      if (x.applied) return '<span class="small">✔ ' + label + ' · 이번 회차 요청' + (g.memo ? ' · ' + esc(g.memo) : '') + '</span>';
-      return '<label class="row small" style="gap:8px"><input type="checkbox" data-xc="att-keep" data-id="' + esc(g.id) + '"' + (A.acceptKeep[g.id] ? ' checked' : '') + ' style="width:18px;height:18px"><span>' + label + ' · <b>지난 요청 다시 적용?</b> (' + esc(Core.shortDate(g.date)) + '부터 계속 적용)</span></label>';
-    }).join('') : '<span class="muted small">이번 회차 요청이 없습니다. 전체 명단에서 묶을 수 있습니다.</span>') + '</section>';
-
-    // 분반
-    html += '<section class="card pad" style="display:flex;flex-direction:column;gap:12px"><div class="row between"><b style="font-size:17px">② 분반 · 학교명·학반 정리</b><button class="btn" data-x="att-resplit">자동 분반 다시 하기</button></div>' +
-      '<p class="muted small" style="margin:0">규칙: 같은 반 요청 → 같은 학교 → 한 반 16명 이하 → 인원 균등 (창의 1,2반은 1학년도 균등). 노란 칸은 학교명·학반을 자동으로 정하지 못한 곳이니 직접 고쳐 주세요. [⇄]로 다른 반으로 옮깁니다.</p>';
-    var groups = {};
-    A.sources.forEach(function (s) { (groups[s.group] = groups[s.group] || []).push(s); });
-    Object.keys(groups).forEach(function (gname) {
-      var parts = groups[gname];
-      var g1 = parts.map(function (p) { return p.students.filter(function (s) { return s.grade1; }).length; });
-      html += '<div><b>' + esc(gname) + '</b> <span class="muted small">' + parts.map(function (p) { return p.students.length; }).join(' / ') + '명' +
-        (parts[0].multi && parts.length > 1 ? ' · 1학년 ' + g1.join(' / ') : '') + '</span></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px">';
-      parts.forEach(function (p) {
-        var over = p.students.length > Roster.CAP;
-        html += '<div class="part"><div class="part-head"><span>' + esc(p.label) + '</span><span style="color:' + (over ? 'var(--red)' : 'inherit') + '">' + p.students.length + '명' + (over ? ' ⚠ 16명 초과' : '') + '</span></div>';
-        var prevSchool = '';
-        p.students.forEach(function (s) {
-          html += '<div class="prow' + (prevSchool && prevSchool !== s.school ? ' sep' : '') + '"><b>' + esc(s.name) + (letters[s.no] ? ' <span class="badge link">🔗' + letters[s.no] + '</span>' : '') + (s.grade1 && p.multi ? ' <span class="badge amber">1학년</span>' : '') + '</b>' +
-            '<input type="text" class="' + (s.schoolOk ? '' : 'warn') + '" value="' + esc(s.school) + '" data-xi="att-edit" data-no="' + esc(s.no) + '" data-f="school" aria-label="학교명">' +
-            '<input type="text" class="' + (s.banOk ? '' : 'warn') + '" value="' + esc(s.ban) + '" data-xi="att-edit" data-no="' + esc(s.no) + '" data-f="ban" aria-label="학반">' +
-            '<span class="small muted">' + esc(s.cls.replace(p.group, '').trim()) + '</span>' +
-            (p.parts > 1 ? '<button class="btn sm" data-x="att-move" data-key="' + esc(p.key) + '" data-no="' + esc(s.no) + '" aria-label="다른 반으로">⇄</button>' : '<span></span>') + '</div>';
-          prevSchool = s.school;
-        });
-        html += '</div>';
-      });
-      html += '</div>';
-    });
-    html += '</section>';
-
-    // 반 설정·연결
-    var probs = attProblems();
-    html += '<section class="card pad" style="display:flex;flex-direction:column;gap:10px"><div class="row between"><b style="font-size:17px">③ 출석부 반 설정·연결</b><button class="btn sm" data-x="att-badd">블록 추가</button></div>' +
-      '<p class="muted small" style="margin:0">' + (A.topics ? '주제·교구 시트에서 ' + A.topics.length + '개 수업을 읽었습니다. ' : (A.topicErr ? '<span style="color:var(--red)">주제·교구 시트: ' + esc(A.topicErr) + '</span> ' : '주제·교구 시트를 읽는 중… ')) +
-      '<span class="badge" style="background:#EFF4FF;color:#1E3A8A">파란 칸</span>은 추천 값입니다. 「수업 연결」은 주제·교구 시트의 반 이름(예: 기초1/기초2), 「교실」은 1-2교시/3-4교시 교실(예: 라온실/놀이실)입니다. 다른 수업 사이는 /, 같은 수업 교구는 , 로 씁니다.</p>' +
-      '<div class="tbox"><table class="grid att-tbl" style="min-width:1150px"><thead><tr><th style="width:36px">순서</th><th style="width:170px">연결할 명단</th><th>제목 (1줄)</th><th style="width:120px">수업 연결</th><th style="width:120px">교실</th><th>교실·교구 문구 (3줄)</th><th style="width:76px">신청반</th><th style="width:44px">인원</th><th style="width:96px"></th></tr></thead><tbody>' +
-      A.blocks.map(function (b, i) {
-        var s = b.src && srcByKey(b.src);
-        var gen = b.sessions.split('/').some(function (x) { return A.generic && A.generic[x.replace(/\s+/g, '')]; });
-        return '<tr><td><b>' + (i + 1) + '</b></td><td><select data-xc="att-bf" data-i="' + i + '" data-f="src" aria-label="연결할 명단"><option value="">(선택)</option>' +
-          A.sources.map(function (x) { return '<option value="' + esc(x.key) + '"' + (x.key === b.src ? ' selected' : '') + '>' + esc(x.label) + '</option>'; }).join('') + '</select></td>' +
-          '<td><input type="text" value="' + esc(b.title) + '" data-xi="att-bf" data-i="' + i + '" data-f="title" aria-label="제목"></td>' +
-          '<td><input type="text" value="' + esc(b.sessions) + '" data-xi="att-bf" data-i="' + i + '" data-f="sessions" aria-label="수업 연결"></td>' +
-          '<td><input type="text" value="' + esc(b.rooms) + '" placeholder="라온실/놀이실" data-xi="att-bf" data-i="' + i + '" data-f="rooms" aria-label="교실"></td>' +
-          '<td><input type="text" class="' + (b.lineEdited ? '' : 'sug') + (gen ? ' warn' : '') + '" value="' + esc(b.line) + '" data-xi="att-bf" data-i="' + i + '" data-f="line" aria-label="교실·교구 문구"' + (gen ? ' title="교구가 노트북·태블릿 같은 공용 기기뿐이라 확인이 필요합니다"' : '') + '></td>' +
-          '<td><input type="text" value="' + esc(b.tag) + '" data-xi="att-bf" data-i="' + i + '" data-f="tag" aria-label="신청반 표기"></td>' +
-          '<td style="font-weight:700;color:' + (s && s.students.length > Roster.CAP ? 'var(--red)' : 'inherit') + '">' + (s ? s.students.length : '-') + '</td>' +
-          '<td><button class="btn sm" data-x="att-recompose" data-i="' + i + '" title="수업 연결·교실과 주제·교구 시트로 문구를 다시 채웁니다">추천</button> <button class="btn sm" data-x="att-bdel" data-i="' + i + '" aria-label="블록 삭제">✕</button></td></tr>';
-      }).join('') + '</tbody></table></div>' +
-      (probs.length ? '<div class="card pad small" style="border-color:#FECDCA;background:var(--red-bg)">' + probs.map(esc).join('<br>') + '</div>' : '<div class="card pad small" style="border-color:#BBF7D0;background:#F0FDF4">✔ 모든 명단이 한 블록씩 연결됨 · 16명 넘는 블록 없음</div>') +
-      '<label class="row" style="font-weight:700;min-height:44px"><input type="checkbox" data-xc="att-check"' + (A.checked ? ' checked' : '') + (probs.length ? ' disabled' : '') + ' style="width:20px;height:20px">제목·교실·교구를 확인했습니다 (확인 완료)</label></section>';
-
-    // 미리보기 + 확정
-    if (A.checked && !probs.length) {
-      html += '<section class="card pad" style="display:flex;flex-direction:column;gap:12px"><b style="font-size:17px">④ 미리보기</b><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:14px">' +
-        A.blocks.map(function (b) { return sheetPreview(b, srcByKey(b.src).students); }).join('') + '</div>' +
-        '<div class="row" style="justify-content:flex-end"><button class="btn primary" data-x="att-save">⑤ 확정 저장 · ' + esc(Roster.fileName(S.date, 1)) + ' 내려받기</button></div></section>';
+    var html = stepsBar(A.step);
+    if (A.step === 1) {
+      var lastAt = (S.data.classes || []).map(function (c) { return c.lastAt ? c.lastAt + ' · ' + c.lastBy : ''; }).filter(Boolean).sort().pop() || '';
+      var red = openRows('red').length;
+      var waiting = S.data.rows.filter(function (r) { return !r.cancelled && r.cells[12] === '대기'; }).length;
+      html += '<section class="card pad" style="display:flex;flex-direction:column;gap:12px;border:2px solid #F59E0B"><b style="font-size:17px">① 출석부를 만들기 전에 확인해 주세요</b><div style="line-height:2">' +
+        '· 마지막 명단 업로드: <b>' + esc(lastAt ? lastAt.slice(5) : '아직 없음') + '</b><br>&nbsp;&nbsp;→ 통합예약시스템 관리자 페이지에서 <b>최신 명단을 받아 다시 올렸나요?</b><br>' +
+        '· 아직 처리하지 않은 <b style="color:var(--red)">취소 대상 ' + red + '건</b><br>' +
+        '· 승인 안 된 대기자 <b>' + waiting + '명</b> (출석부에서 빠집니다)<br>' +
+        '· 출석부에는 <b>승인</b>된 신청자 ' + A.sources.reduce(function (n, s) { return n + s.students.length; }, 0) + '명이 들어갑니다.</div>' +
+        '<div class="row"><button class="btn" data-x="att-gohome">명단 올리러 가기</button></div></section>' + navBar(false, '다음: 반 설정 →');
+    } else if (A.step === 2) {
+      var ck = blockChecks();
+      html += '<section class="card pad small muted" style="line-height:1.8">② 출석부 맨 위 두 줄입니다. <b>파란 테두리 칸</b>만 고르거나 입력하면 됩니다. 날짜는 자동으로 들어가고, 신청반 표기는 반 이름에서 자동으로 만들어집니다. 교구는 수업 사이를 <b>/</b>, 같은 수업 안의 여러 교구를 <b>,</b> 로 나눕니다(예: <b>핏츠, 코너드/펑펑 눈내리는 마을</b>).</section>' +
+        A.blocks.map(function (b, i) { return blockCard(b, i, ck); }).join('') + navBar(true, '다음: 분반·학교명 정리 →');
+    } else if (A.step === 3) {
+      var letters = {};
+      (A.sets || []).forEach(function (set, k) { set.nos.forEach(function (no) { letters[no] = String.fromCharCode(65 + (k % 26)); }); });
+      var dl = dateLinks();
+      html += '<section class="card pad small" style="display:flex;flex-direction:column;gap:6px;background:#FAF7FF;border-color:#DDD6FE"><b>같은 반 요청</b>' + (dl.length ? dl.map(function (x) {
+        var g = x.g, label = g.members.map(function (m) { return esc(m.name) + '(' + esc(m.school) + ')'; }).join(' + ');
+        if (x.applied) return '<span>✔ ' + label + ' · 이번 회차 요청' + (g.memo ? ' · ' + esc(g.memo) : '') + '</span>';
+        return '<label class="row" style="gap:8px"><input type="checkbox" data-xc="att-keep" data-id="' + esc(g.id) + '"' + (A.acceptKeep[g.id] ? ' checked' : '') + ' style="width:18px;height:18px"><span>' + label + ' · <b>지난 요청 다시 적용?</b> (' + esc(Core.shortDate(g.date)) + '부터 계속 적용)</span></label>';
+      }).join('') : '<span class="muted">이번 회차 요청이 없습니다. 전체 명단에서 묶을 수 있습니다.</span>') + '</section>';
+      if (A.errors.length) html += '<section class="card pad" style="border-color:#FECDCA;background:var(--red-bg)">' + A.errors.map(esc).join('<br>') + '</section>';
+      html += '<section class="card pad row between small"><span class="muted">③ 출석부와 같은 모양입니다. 학교는 정식 이름으로 바꾼 결과이고, <b>노란 칸</b>은 자동으로 정하지 못한 곳이니 눌러서 고쳐 주세요. [⇄]로 다른 반으로 옮깁니다. 규칙: 같은 반 요청 → 같은 학교 → 한 반 16명 이하 → 인원 균등 (창의 1,2반은 1학년도 균등)</span><button class="btn" data-x="att-resplit">자동 분반 다시 하기</button></section>' +
+        A.blocks.map(function (b, i) { return sheetBlock(b, i, letters); }).join('');
+      var sp = splitProblems();
+      if (sp.length) html += '<section class="card pad small" style="border-color:#FECDCA;background:var(--red-bg)">' + sp.map(esc).join('<br>') + '</section>';
+      html += navBar(true, '다음: 확인·내려받기 →');
+    } else {
+      html += '<section class="card pad" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:17px">④ 확인·내려받기</b><div class="tbox"><table class="grid"><thead><tr><th>순서</th><th>제목</th><th>교실·교구</th><th>신청반</th><th>인원</th></tr></thead><tbody>' +
+        A.blocks.map(function (b, i) { var s = srcByKey(b.src); return '<tr><td>' + (i + 1) + '</td><td>' + esc(Roster.makeTitle(S.date, b)) + '</td><td>' + esc(Roster.makeLine(b)) + '</td><td>' + esc(b.tag) + '</td><td>' + (s ? s.students.length : 0) + '명</td></tr>'; }).join('') +
+        '</tbody></table></div><p class="muted small" style="margin:0">확정하면 이 배정이 1차로 저장되고 엑셀이 내려받아집니다. 이후에는 분반을 다시 하지 않고 취소 처리·학생 추가만 합니다.</p></section>' +
+        navBar(true, '확정 저장 · ' + esc(Roster.fileName(S.date, 1)) + ' 내려받기', 'att-save');
     }
     return html;
+  }
+
+  function attNext() {
+    var A = S.att;
+    if (A.step === 2) {
+      var ck = blockChecks();
+      if (ck.errors.length) { render(); toast('빨간색으로 표시한 반 설정을 먼저 고쳐 주세요.'); return; }
+    }
+    if (A.step === 3) {
+      var sp = splitProblems();
+      if (sp.length) { render(); toast(sp[0]); return; }
+    }
+    A.step = Math.min(4, A.step + 1);
+    render(); window.scrollTo(0, 0);
   }
 
   function draftData() {
@@ -1094,10 +1059,21 @@
       acceptKeep: A.acceptKeep,
       blocks: A.blocks.map(function (b) {
         var s = srcByKey(b.src);
-        return { key: b.src, title: b.title, sessions: b.sessions, rooms: b.rooms, line: b.line, tag: b.tag,
+        return { key: b.key, program: b.program, name: b.name, same: !!b.same, room1: b.room1, room2: b.room2, tool1: b.tool1, tool2: b.tool2,
+          tag: b.tag, tagEdited: !!b.tagEdited, title: Roster.makeTitle(S.date, b), line: Roster.makeLine(b),
           students: s.students.map(function (st) { return { no: st.no, name: st.name, school: st.school, ban: st.ban, status: '' }; }) };
       })
     };
+  }
+
+  function viewAtt() {
+    var saved = S.data.att;
+    if (S.att && S.att.date !== S.date) S.att = null;
+    if (S.att && S.att.mode === 'draft') return viewAttDraft();
+    if (saved) return viewAttSaved(saved);
+    return stepsBar(0) + '<section class="card pad" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:17px">' + esc(md(S.date)) + ' 출석부 만들기</b>' +
+      '<p class="muted" style="margin:0">승인된 신청자만으로 출석부를 만듭니다. ① 최신 명단 확인 → ② 반 설정(제목·교실·교구) → ③ 분반·학교명 정리 → ④ 확인·내려받기 순서로 한 단계씩 진행합니다.</p>' +
+      '<div><button class="btn primary" data-x="att-start">출석부 만들기 시작</button></div></section>';
   }
 
   function downloadExcel(data, version) {
@@ -1131,7 +1107,7 @@
       S.att = { mode: 'edit', date: S.date, version: saved.version, data: JSON.parse(JSON.stringify(saved.data)), dirty: false };
     }
     var A = S.att, blocks = A.data.blocks || [];
-    var html = stepsBar(5) + '<section class="card pad row between" style="border-color:#86EFAC"><div><b style="font-size:17px">✔ ' + saved.version + '차 확정 · ' + esc(String(saved.at).slice(5, 16)) + ' · ' + esc(saved.by) + '</b>' +
+    var html = stepsBar(5, true) + '<section class="card pad row between" style="border-color:#86EFAC"><div><b style="font-size:17px">✔ ' + saved.version + '차 확정 · ' + esc(String(saved.at).slice(5, 16)) + ' · ' + esc(saved.by) + '</b>' +
       '<div class="muted small">확정 후에는 분반을 다시 하지 않습니다. 취소한 학생은 출석부에서 빠지고 결석 기록으로 넘어갑니다. 바꾼 내용은 [변경 저장]을 눌러야 다음 차수로 저장됩니다.</div></div>' +
       '<div class="row"><button class="btn" data-x="att-redl">엑셀 다시 내려받기 (' + esc(Roster.fileName(S.date, saved.version)) + ')</button>' +
       '<button class="btn primary" data-x="att-save2"' + (A.dirty ? '' : ' disabled') + '>변경 저장 · ' + esc(Roster.fileName(S.date, saved.version + 1)) + '</button>' +
@@ -1201,23 +1177,24 @@
     else if (x === 'abs-del') {
       if (!confirm('이 결석 기록을 삭제할까요?')) return;
       api('absDelete', { id: t.getAttribute('data-id') }).then(function () { return load(S.date); }).catch(function (er) { toast(er.message); });
-    } else if (x === 'abs-add') {
-      var s = S.absSide[+t.getAttribute('data-k')];
-      var r = s.no ? rowByNo(s.no) : null;
-      saveAbs({ date: S.date, no: s.no, name: s.name, school: s.school, ban: s.ban, cls: s.cls, phone: r ? r.cells[3] : '', src: '당일 결석', reason: '당일 무단결석' });
     }
-    else if (x === 'att-start') startAtt();
-    else if (x === 'att-resplit') { computeParts(); A.blocks.forEach(function (b) { if (!srcByKey(b.src)) b.src = ''; }); render(); }
+    else if (x === 'att-start') buildDraft();
+    else if (x === 'att-gohome') { S.view = 'home'; render(); window.scrollTo(0, 0); }
+    else if (x === 'att-next') attNext();
+    else if (x === 'att-prev') { A.step = Math.max(1, A.step - 1); render(); window.scrollTo(0, 0); }
+    else if (x === 'att-step') { A.step = +t.getAttribute('data-n'); render(); window.scrollTo(0, 0); }
+    else if (x === 'att-resplit') { computeParts(); render(); }
     else if (x === 'att-move') {
       var from = srcByKey(t.getAttribute('data-key'));
       var sib = A.sources.filter(function (s) { return s.group === from.group && s.key !== from.key; })[0];
       var k = from.students.findIndex(function (s) { return s.no === t.getAttribute('data-no'); });
-      if (sib && k >= 0) { sib.students = Roster.sortStudents(sib.students.concat(from.students.splice(k, 1))); A.checked = false; render(); }
+      if (sib && k >= 0) { sib.students = Roster.sortStudents(sib.students.concat(from.students.splice(k, 1))); render(); }
     }
-    else if (x === 'att-badd') { A.blocks.push({ key: '', src: '', title: md(S.date) + ' 수강생 명단', sessions: '', rooms: '', line: '', tag: '', lineEdited: true }); A.checked = false; render(); }
-    else if (x === 'att-bdel') { if (confirm((i + 1) + '번 블록을 삭제할까요?')) { A.blocks.splice(i, 1); A.checked = false; render(); } }
-    else if (x === 'att-recompose') { recompose(A.blocks[i]); render(); }
-    else if (x === 'att-save') saveAtt(draftData());
+    else if (x === 'att-save') {
+      var sp = splitProblems(), ck = blockChecks();
+      if (sp.length || ck.errors.length) { toast('반 설정이나 분반에 고칠 곳이 있습니다.'); return; }
+      saveAtt(draftData());
+    }
     else if (x === 'att-redl') downloadExcel(S.data.att.data, S.data.att.version);
     else if (x === 'att-save2') saveAtt(A.data);
     else if (x === 'att-rebuild') { if (confirm('저장된 출석부와 상관없이 처음부터 다시 분반합니다. 저장하기 전까지 기존 출석부는 그대로입니다. 계속할까요?')) buildDraft(); }
@@ -1238,30 +1215,44 @@
     if (x === 'abs-ex') absPatch(el.getAttribute('data-id'), { excused: el.checked });
     else if (x === 'abs-field') { var p = {}; p[el.getAttribute('data-f')] = el.value; absPatch(el.getAttribute('data-id'), p); }
     else if (x === 'att-keep') { if (el.checked) A.acceptKeep[el.getAttribute('data-id')] = true; else delete A.acceptKeep[el.getAttribute('data-id')]; computeParts(); render(); }
-    else if (x === 'att-bf') { A.blocks[+el.getAttribute('data-i')][el.getAttribute('data-f')] = el.value; A.checked = false; render(); }
-    else if (x === 'att-check') { A.checked = el.checked; render(); }
+    else if (x === 'att-b') {
+      var b = A.blocks[+el.getAttribute('data-i')], f = el.getAttribute('data-f');
+      b[f] = el.type === 'checkbox' ? el.checked : el.value;
+      render();
+    }
+  }
+
+  function updatePreview(i) {
+    var b = S.att.blocks[i], pv = document.getElementById('pv-' + i);
+    if (pv) pv.textContent = Roster.makeTitle(S.date, b) + ' / ' + Roster.makeLine(b);
+    // 입력할 때마다 반 설정 검사 문구도 바로 고칩니다
+    var ck = blockChecks();
+    S.att.blocks.forEach(function (_, k) {
+      var box = document.getElementById('ck-' + k);
+      if (box) box.innerHTML = checkMsgs(ck.errors.filter(function (e) { return e.i === k; }), ck.warns.filter(function (e) { return e.i === k; }));
+    });
   }
 
   function extraInput(el) {
     var x = el.getAttribute('data-xi'), A = S.att;
-    if (x === 'absq') { S.absq = el.value; var side = document.getElementById('abs-side'); if (side) side.innerHTML = absSideHtml(); }
-    else if (x === 'att-edit') {
+    if (x === 'att-edit') {
       var no = el.getAttribute('data-no'), f = el.getAttribute('data-f');
       A.edits[no] = A.edits[no] || {};
       A.edits[no][f] = el.value;
       A.sources.forEach(function (s) { s.students.forEach(function (st) { if (st.no === no) { st[f] = el.value; if (f === 'school') st.schoolOk = true; else st.banOk = /^\d-\d+$/.test(el.value); } }); });
       el.classList.toggle('warn', f === 'ban' && !/^\d-\d+$/.test(el.value));
       if (f === 'school') el.classList.remove('warn');
-    } else if (x === 'att-bf') {
-      var b = A.blocks[+el.getAttribute('data-i')], f2 = el.getAttribute('data-f');
+    } else if (x === 'att-b') {
+      var i = +el.getAttribute('data-i'), b = A.blocks[i], f2 = el.getAttribute('data-f');
       b[f2] = el.value;
-      if (f2 === 'line') { b.lineEdited = true; el.classList.remove('sug'); }
-      if ((f2 === 'sessions' || f2 === 'rooms') && !b.lineEdited) {
-        recompose(b);
-        var li = el.closest('tr').querySelector('[data-f=line]');
-        if (li) li.value = b.line;
+      if (f2 === 'tag') b.tagEdited = true;
+      if (f2 === 'name' && !b.tagEdited) {
+        b.tag = Roster.autoTag(b.name);
+        var card = el.closest('section');
+        var ti = card && card.querySelector('[data-f=tag]');
+        if (ti) ti.value = b.tag;
       }
-      if (A.checked) { A.checked = false; var cb = document.querySelector('[data-xc=att-check]'); if (cb) cb.checked = false; }
+      updatePreview(i);
     } else if (x === 'att-ef') {
       A.data.blocks[+el.getAttribute('data-i')][el.getAttribute('data-f')] = el.value;
       if (!A.dirty) { A.dirty = true; var bt = document.querySelector('[data-x=att-save2]'); if (bt) bt.disabled = false; }
@@ -1274,7 +1265,7 @@
     var t = e.target.closest('[data-view],[data-act],[data-done],[data-ok],[data-undo],[data-expand],[data-sort],[data-fq],[data-go],[data-keepabs],[data-x]');
     if (!t) return;
     if (t.hasAttribute('data-x')) return extraClick(t, e);
-    if (t.hasAttribute('data-keepabs')) return keepAbsence(t.getAttribute('data-keepabs'));
+    if (t.hasAttribute('data-keepabs')) return toggleAbsence(t.getAttribute('data-keepabs'));
     if (t.hasAttribute('data-view')) { S.view = t.getAttribute('data-view'); if (S.view === 'settings') S.settings = null; render(); window.scrollTo(0, 0); return; }
     if (t.hasAttribute('data-sort')) {
       var col = t.getAttribute('data-sort');
