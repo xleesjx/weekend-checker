@@ -166,3 +166,13 @@ tr.cut td { text-decoration: line-through; color: #94A3B8; }
 .xl-tbl input.cellin:hover, .xl-tbl input.cellin:focus { border-color: #93B4F8; background: #fff; }
 .xl-tbl input.cellin.warn { background: #FFFAEB; border-color: #FDB022; }
 .btn.absent-on { background: #FEF3F2; border-color: var(--red); color: var(--red); font-weight: 700; }
+
+/* 엑셀 출석부 그대로 보기 */
+.xls { border-collapse: collapse; table-layout: fixed; background: #fff; color: #000; font-family: '맑은 고딕', 'Malgun Gothic', sans-serif; width: max-content; }
+.xls td { padding: 0 3px; white-space: nowrap; overflow: hidden; line-height: 1.25; }
+.xls td.xk { border: 0 !important; background: transparent; overflow: visible; white-space: nowrap; padding-left: 6px; text-align: left !important; }
+.xls td.xk .btn, .xls td.xk .badge { margin-right: 4px; }
+.xls input.cellin { border: 1px solid transparent; background: transparent; width: 100%; text-align: center; font: inherit; color: inherit; min-height: 28px; padding: 1px 2px; box-sizing: border-box; border-radius: 3px; }
+.xls input.cellin.big { font-weight: 700; min-height: 40px; }
+.xls input.cellin:hover, .xls input.cellin:focus { border-color: #93B4F8; background: #fff; }
+.xls input.cellin.warn { background: #FFFAEB; border-color: #FDB022; }

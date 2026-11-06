@@ -97,4 +97,11 @@ const pl2 = R.parseLine('1-4교시 라온실(파이썬)');
 ok(pl2 && pl2.same && pl2.room1 === '라온실' && pl2.tool1 === '파이썬', '1~4교시 문구 읽기');
 ok(R.makeLine(pl) === '1-2교시 창의실, 3-4교시 혜윰실(핏츠, 코너드/펑펑 눈내리는 마을)', '읽은 값으로 같은 문구 다시 만들기');
 
+// 출석부 출력은 이름 가나다순
+const bv = R.blockValues({ title: 'T', line: 'L', tag: '기초1', students: [{ name: '하나', school: '가온초등학교', ban: '3-1' }, { name: '가람', school: '해솔초등학교', ban: '3-2' }, { name: '나래', school: '가온초등학교', ban: '3-3' }] });
+ok(bv.values[5][3] === '가람' && bv.values[6][3] === '나래' && bv.values[7][3] === '하나' && bv.values[5][1] === '해솔초등학교', '출석부 학생은 이름순');
+ok(bv.values[4][5] === '1교시' && bv.values[23][1] === '신청인원' && bv.values[27][0] === 4 && bv.values[20][0] === 16 && bv.values[21][0] === null, '교시·출결 통계 칸');
+const html = R.sheetHtml({ title: '제목<x>', line: 'L', tag: 't', students: [] });
+ok(/colspan="10" rowspan="2"/.test(html) && /제목&lt;x&gt;/.test(html) && (html.match(/<tr/g) || []).length === 28 && /출석여부/.test(html) && /지도교사/.test(html), '화면 미리보기도 엑셀 28줄 그대로');
+
 console.log('출석부 테스트 ' + passed + '개 통과');

@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '13';
+  var APP_VERSION = '14';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -1009,24 +1009,22 @@
       (warns.length ? '<div class="small" style="color:var(--amber)">' + warns.map(function (e) { return '확인: ' + esc(e.msg); }).join('<br>') + '</div>' : '');
   }
 
+  /** ③ 분반 화면: 내려받을 엑셀과 똑같은 모양. 학교·학반만 고칠 수 있고, 엑셀 밖(K열)에 반 옮기기 버튼 */
   function sheetBlock(b, i, letters) {
     var src = srcByKey(b.src);
     var list = src ? src.students : [];
     var over = list.length > Roster.CAP;
-    var html = '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><b>' + esc(b.label) + '</b><span style="font-weight:700;color:' + (over ? 'var(--red)' : 'inherit') + '">' + list.length + '명' + (over ? ' ⚠ 16명 초과' : '') +
+    var blk = { title: Roster.makeTitle(S.date, b), line: Roster.makeLine(b), tag: b.tag, students: list };
+    var sheet = Roster.sheetHtml(blk, { cell: function (t, c, v, s) {
+      if (!s) return;
+      if (c === 1) return '<input type="text" class="cellin' + (s.schoolOk ? '' : ' warn') + '" value="' + esc(s.school) + '" data-xi="att-edit" data-no="' + esc(s.no) + '" data-f="school" aria-label="학교명">';
+      if (c === 2) return '<input type="text" class="cellin' + (s.banOk ? '' : ' warn') + '" value="' + esc(s.ban) + '" data-xi="att-edit" data-no="' + esc(s.no) + '" data-f="ban" aria-label="학반">';
+      if (c === 10) return (src.parts > 1 ? '<button class="btn sm" data-x="att-move" data-key="' + esc(src.key) + '" data-no="' + esc(s.no) + '" title="다른 반으로 옮기기" aria-label="다른 반으로 옮기기">⇄</button>' : '') +
+        (letters[s.no] ? '<span class="badge link">🔗' + letters[s.no] + '</span>' : '') + (s.grade1 && src.multi ? '<span class="badge amber">1학년</span>' : '');
+    } });
+    return '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><b>' + esc(b.label) + '</b><span style="font-weight:700;color:' + (over ? 'var(--red)' : 'inherit') + '">' + list.length + '명' + (over ? ' ⚠ 16명 초과' : '') +
       (src && src.multi && src.parts > 1 ? ' · 1학년 ' + list.filter(function (s) { return s.grade1; }).length + '명' : '') + '</span></div>' +
-      '<div class="tbox"><div class="xl" style="min-width:620px"><div class="xl-t1">' + esc(Roster.makeTitle(S.date, b)) + '</div><div class="xl-t2">' + esc(Roster.makeLine(b)) + '</div>' +
-      '<table class="xl-tbl"><thead><tr><th style="width:52px">번호</th><th>기관(학교)</th><th style="width:90px">학년/반</th><th style="width:110px">신청자</th><th style="width:80px">신청반</th><th style="width:120px">비고</th>' + (src && src.parts > 1 ? '<th class="mv"></th>' : '') + '</tr></thead><tbody>';
-    var prev = '';
-    list.forEach(function (s, k) {
-      html += '<tr' + (prev && prev !== s.school ? ' class="sep"' : '') + '><td>' + (k + 1) + '</td>' +
-        '<td><input type="text" class="cellin' + (s.schoolOk ? '' : ' warn') + '" value="' + esc(s.school) + '" data-xi="att-edit" data-no="' + esc(s.no) + '" data-f="school" aria-label="학교명"></td>' +
-        '<td><input type="text" class="cellin' + (s.banOk ? '' : ' warn') + '" value="' + esc(s.ban) + '" data-xi="att-edit" data-no="' + esc(s.no) + '" data-f="ban" aria-label="학반"></td>' +
-        '<td>' + esc(s.name) + '</td><td>' + esc(b.tag) + '</td><td>' + (letters[s.no] ? '<span class="badge link">🔗' + letters[s.no] + '</span> ' : '') + (s.grade1 && src.multi ? '<span class="badge amber">1학년</span>' : '') + '</td>' +
-        (src.parts > 1 ? '<td class="mv"><button class="btn sm" data-x="att-move" data-key="' + esc(src.key) + '" data-no="' + esc(s.no) + '" title="다른 반으로 옮기기" aria-label="다른 반으로 옮기기">⇄</button></td>' : '') + '</tr>';
-      prev = s.school;
-    });
-    return html + '</tbody></table></div></div></section>';
+      '<div class="tbox">' + sheet + '</div></section>';
   }
 
   function viewAttDraft() {
@@ -1057,7 +1055,7 @@
         return '<label class="row" style="gap:8px"><input type="checkbox" data-xc="att-keep" data-id="' + esc(g.id) + '"' + (A.acceptKeep[g.id] ? ' checked' : '') + ' style="width:18px;height:18px"><span>' + label + ' · <b>지난 요청 다시 적용?</b> (' + esc(Core.shortDate(g.date)) + '부터 계속 적용)</span></label>';
       }).join('') : '<span class="muted">이번 회차 요청이 없습니다. 전체 명단에서 묶을 수 있습니다.</span>') + '</section>';
       if (A.errors.length) html += '<section class="card pad" style="border-color:#FECDCA;background:var(--red-bg)">' + A.errors.map(esc).join('<br>') + '</section>';
-      html += '<section class="card pad row between small"><span class="muted">③ 출석부와 같은 모양입니다. 학교는 정식 이름으로 바꾼 결과이고, <b>노란 칸</b>은 자동으로 정하지 못한 곳이니 눌러서 고쳐 주세요. [⇄]로 다른 반으로 옮깁니다. 규칙: 같은 반 요청 → 같은 학교 → 한 반 16명 이하 → 인원 균등 (창의 1,2반은 1학년도 균등)</span><button class="btn" data-x="att-resplit">자동 분반 다시 하기</button></section>' +
+      html += '<section class="card pad row between small"><span class="muted">③ 내려받을 엑셀 출석부와 똑같은 모양입니다(학생은 이름 가나다순). 분반은 학교별로 나누고, 학교는 정식 이름으로 바꾼 결과입니다. <b>노란 칸</b>은 자동으로 정하지 못한 곳이니 눌러서 고쳐 주세요. [⇄]로 다른 반으로 옮깁니다. 규칙: 같은 반 요청 → 같은 학교 → 한 반 16명 이하 → 인원 균등 (창의 1,2반은 1학년도 균등)</span><button class="btn" data-x="att-resplit">자동 분반 다시 하기</button></section>' +
         A.blocks.map(function (b, i) { return sheetBlock(b, i, letters); }).join('');
       var sp = splitProblems();
       if (sp.length) html += '<section class="card pad small" style="border-color:#FECDCA;background:var(--red-bg)">' + sp.map(esc).join('<br>') + '</section>';
@@ -1093,7 +1091,7 @@
         var s = srcByKey(b.src);
         return { key: b.key, program: b.program, name: b.name, same: !!b.same, room1: b.room1, room2: b.room2, tool1: b.tool1, tool2: b.tool2,
           tag: b.tag, tagEdited: !!b.tagEdited, title: Roster.makeTitle(S.date, b), line: Roster.makeLine(b),
-          students: s.students.map(function (st) { return { no: st.no, name: st.name, school: st.school, ban: st.ban, status: '' }; }) };
+          students: Roster.byName(s.students).map(function (st) { return { no: st.no, name: st.name, school: st.school, ban: st.ban, status: '' }; }) };
       })
     };
   }
@@ -1138,6 +1136,7 @@
   function viewAttSaved(saved) {
     if (!S.att || S.att.mode !== 'edit' || S.att.version !== saved.version) {
       S.att = { mode: 'edit', date: S.date, version: saved.version, data: JSON.parse(JSON.stringify(saved.data)), dirty: false };
+      (S.att.data.blocks || []).forEach(function (b) { b.students = Roster.byName(b.students); });
     }
     var A = S.att, blocks = A.data.blocks || [];
     var html = stepsBar(5, true) + '<section class="card pad row between" style="border-color:#86EFAC"><div><b style="font-size:17px">✔ ' + saved.version + '차 확정 · ' + esc(String(saved.at).slice(5, 16)) + ' · ' + esc(saved.by) + '</b>' +
@@ -1146,17 +1145,23 @@
       '<button class="btn primary" data-x="att-save2"' + (A.dirty ? '' : ' disabled') + '>변경 저장 · ' + esc(Roster.fileName(S.date, saved.version + 1)) + '</button>' +
       '<button class="btn" data-x="att-rebuild">처음부터 다시 만들기</button></div></section>';
     blocks.forEach(function (b, i) {
-      var live = (b.students || []).filter(function (s) { return s.status !== '취소'; }).length;
-      html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><input type="text" value="' + esc(b.title) + '" data-xi="att-ef" data-i="' + i + '" data-f="title" aria-label="제목" style="flex:1;font-weight:700">' +
+      var all = b.students || [];
+      var liveList = all.filter(function (s) { return s.status !== '취소'; });
+      var cut = all.filter(function (s) { return s.status === '취소'; });
+      var live = liveList.length;
+      var idx = function (s) { return all.indexOf(s); };
+      var sheet = Roster.sheetHtml({ title: b.title, line: b.line, tag: b.tag, students: liveList }, { cell: function (t, c, v, s) {
+        if (t === 0 && c === 0) return '<input type="text" class="cellin big" value="' + esc(b.title) + '" data-xi="att-ef" data-i="' + i + '" data-f="title" aria-label="제목">';
+        if (t === 2 && c === 0) return '<input type="text" class="cellin" value="' + esc(b.line) + '" data-xi="att-ef" data-i="' + i + '" data-f="line" aria-label="교실·교구">';
+        if (s && c === 10) return (s.added ? '<span class="badge new">추가</span>' : '') + '<button class="btn sm" data-x="att-cancel" data-i="' + i + '" data-j="' + idx(s) + '">취소 처리</button>';
+      } });
+      html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><b>' + (i + 1) + '번째 반</b>' +
         '<span style="font-weight:700;color:' + (live > Roster.CAP ? 'var(--red)' : 'inherit') + '">' + live + '명' + (live > Roster.CAP ? ' ⚠ 16명 초과' : '') + '</span></div>' +
-        '<input type="text" value="' + esc(b.line) + '" data-xi="att-ef" data-i="' + i + '" data-f="line" aria-label="교실·교구">' +
-        '<div class="tbox"><table class="grid"><thead><tr><th>번호</th><th>기관(학교)</th><th>학년/반</th><th>신청자</th><th>신청반</th><th>상태</th><th></th></tr></thead><tbody>' +
-        (b.students || []).map(function (s, j) {
-          var cut = s.status === '취소';
-          return '<tr class="' + (cut ? 'cut' : '') + '"><td>' + (j + 1) + '</td><td>' + esc(s.school) + '</td><td>' + esc(s.ban) + '</td><td>' + esc(s.name) + '</td><td>' + esc(b.tag) + '</td>' +
-            '<td>' + (cut ? '<span class="badge done" style="text-decoration:none">취소자</span>' : (s.added ? '<span class="badge new">추가</span>' : '')) + '</td>' +
-            '<td style="text-decoration:none">' + (cut ? '<button class="btn sm" data-x="att-uncancel" data-i="' + i + '" data-j="' + j + '">되돌리기</button>' : '<button class="btn sm" data-x="att-cancel" data-i="' + i + '" data-j="' + j + '">취소 처리</button>') + '</td></tr>';
-        }).join('') + '</tbody></table></div><div><button class="btn sm" data-x="att-addstu" data-i="' + i + '">학생 추가</button></div></section>';
+        '<div class="tbox">' + sheet + '</div>' +
+        (cut.length ? '<div class="small" style="display:flex;flex-direction:column;gap:6px"><b>취소자 (엑셀에서 빠짐)</b>' + cut.map(function (s) {
+          return '<div class="row" style="gap:8px"><span class="badge done">취소자</span><span>' + esc(s.name) + ' · ' + esc(s.school) + ' ' + esc(s.ban) + '</span><button class="btn sm" data-x="att-uncancel" data-i="' + i + '" data-j="' + idx(s) + '">되돌리기</button></div>';
+        }).join('') + '</div>' : '') +
+        '<div><button class="btn sm" data-x="att-addstu" data-i="' + i + '">학생 추가</button></div></section>';
     });
     return html;
   }
@@ -1186,7 +1191,7 @@
       }
       if (st) {
         st.status = ''; st.added = true;
-        A.data.blocks[i].students.push(st);
+        A.data.blocks[i].students = Roster.byName(A.data.blocks[i].students.concat([st]));
         A.dirty = true;
         close(); render();
       }

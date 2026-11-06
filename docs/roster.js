@@ -304,6 +304,85 @@ var Roster = (function () {
     cell.style = st;
   }
 
+  var COL_WIDTHS = [6.25, 18.75, 8.375, 11.875, 8.125, 6.625, 6.625, 6.625, 6.625, 11, 9];
+
+  /** 출석부에 들어가는 학생 순서: 신청자 이름 가나다순 (분반은 학교 순으로 나누고, 출력은 이름순) */
+  function byName(list) {
+    return (list || []).slice().sort(function (a, b) {
+      return String(a.name).localeCompare(String(b.name), 'ko') || String(a.school).localeCompare(String(b.school), 'ko') || byKo(a.no, b.no);
+    });
+  }
+
+  /** 한 반 블록(28줄 × 11칸)의 병합 범위 [위줄, 왼칸, 아래줄, 오른칸] (0부터, 블록 안 기준) */
+  function blockMerges() {
+    var m = [[0, 0, 1, 9], [2, 0, 2, 9]];
+    for (var c = 0; c < 5; c++) m.push([3, c, 4, c]);
+    m.push([3, 5, 3, 8], [3, 9, 4, 9]);
+    var sr = 5 + STUDENT_ROWS;
+    for (var k = 0; k < 5; k++) m.push([sr + k, 1, sr + k, 2], [sr + k, 3, sr + k, 4], [sr + k, 5, sr + k, 7], [sr + k, 8, sr + k, 9]);
+    return m;
+  }
+
+  /** 한 반 블록에 들어가는 값 (엑셀과 화면 미리보기가 같은 값을 씁니다). 학생은 이름순. */
+  function blockValues(blk) {
+    var v = [];
+    for (var t = 0; t < BLOCK_ROWS; t++) { v.push([]); for (var c = 0; c < COLS; c++) v[t].push(null); }
+    v[0][0] = blk.title; v[2][0] = blk.line;
+    ['번호', '기관(학교)', '학년/반', '신청자', '신청반'].forEach(function (h, i) { v[3][i] = h; });
+    v[3][5] = '출석여부'; v[3][9] = '비고';
+    for (c = 5; c <= 8; c++) v[4][c] = (c - 4) + '교시';
+    var list = byName(blk.students);
+    for (var i = 0; i < STUDENT_ROWS; i++) {
+      var s = list[i];
+      if (s || i < CAP) v[5 + i][0] = i + 1;
+      if (s) { v[5 + i][1] = s.school; v[5 + i][2] = s.ban; v[5 + i][3] = s.name; v[5 + i][4] = blk.tag; }
+    }
+    var sr = 5 + STUDENT_ROWS;
+    ['교시', '신청인원', null, '수강인원', null, '결석인원', null, null, '지도교사'].forEach(function (x, i) { if (x) v[sr][i] = x; });
+    for (var k = 1; k <= 4; k++) v[sr + k][0] = k;
+    return { values: v, students: list };
+  }
+
+  function escHtml(x) {
+    return String(x == null ? '' : x).replace(/[&<>"']/g, function (ch) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]; });
+  }
+
+  /**
+   * 엑셀 출석부와 똑같은 모양의 화면 미리보기 (칸 너비·줄 높이·글자·채우기·테두리·병합 모두 원본 서식 그대로)
+   * opts.cell(t, c, value, student) 가 문자열을 돌려주면 그 칸 내용을 바꿉니다 (입력칸·버튼 넣기용). t: 블록 안 줄(0~27), c: 칸(0~10)
+   */
+  function sheetHtml(blk, opts) {
+    opts = opts || {};
+    var bv = blockValues(blk), v = bv.values;
+    var px = function (w) { return Math.round(w * 7 + 5); };
+    var cover = {}, span = {};
+    blockMerges().forEach(function (m) {
+      span[m[0] + ',' + m[1]] = m;
+      for (var r = m[0]; r <= m[2]; r++) for (var c = m[1]; c <= m[3]; c++) if (r !== m[0] || c !== m[1]) cover[r + ',' + c] = true;
+    });
+    var bw = function (x) { return x === 'medium' ? '2px solid #000' : (x === 'thin' ? '1px solid #000' : '0'); };
+    var html = '<table class="xls"><colgroup>' + COL_WIDTHS.map(function (w) { return '<col style="width:' + px(w) + 'px">'; }).join('') + '</colgroup><tbody>';
+    for (var t = 0; t < BLOCK_ROWS; t++) {
+      html += '<tr style="height:' + Math.round(TPL_HEIGHTS[t] * 4 / 3) + 'px">';
+      for (var c = 0; c < COLS; c++) {
+        if (cover[t + ',' + c]) continue;
+        var m = span[t + ',' + c] || [t, c, t, c];
+        var st = TPL_STYLES[TPL_GRID[t][c]];
+        var L = TPL_STYLES[TPL_GRID[m[0]][m[1]]][6], R = TPL_STYLES[TPL_GRID[m[0]][m[3]]][7];
+        var T = TPL_STYLES[TPL_GRID[m[0]][m[1]]][8], B = TPL_STYLES[TPL_GRID[m[2]][m[1]]][9];
+        var css = 'font-size:' + Math.round(st[0] * 4 / 3) + 'px;' + (st[1] ? 'font-weight:700;' : '') + (st[2] ? 'background:#' + st[2] + ';' : '') +
+          'text-align:' + (st[3] || 'left') + ';vertical-align:' + (st[4] === 'center' ? 'middle' : 'bottom') + ';' + (st[5] ? 'white-space:normal;' : '') +
+          'border-left:' + bw(L) + ';border-right:' + bw(R) + ';border-top:' + bw(T) + ';border-bottom:' + bw(B) + ';';
+        var stu = (t >= 5 && t < 5 + STUDENT_ROWS) ? bv.students[t - 5] : null;
+        var inner = opts.cell ? opts.cell(t, c, v[t][c], stu) : undefined;
+        html += '<td' + (m[3] > m[1] ? ' colspan="' + (m[3] - m[1] + 1) + '"' : '') + (m[2] > m[0] ? ' rowspan="' + (m[2] - m[0] + 1) + '"' : '') + (c === 10 ? ' class="xk"' : '') + ' style="' + css + '">' +
+          (inner !== undefined && inner !== null ? inner : escHtml(v[t][c])) + '</td>';
+      }
+      html += '</tr>';
+    }
+    return html + '</tbody></table>';
+  }
+
   /** blocks: [{ title, line, tag, students:[{school, ban, name}] }] → ExcelJS Workbook */
   function buildWorkbook(ExcelJS, blocks, sheetName) {
     var wb = new ExcelJS.Workbook();
@@ -315,7 +394,7 @@ var Roster = (function () {
         printArea: 'A1:J' + last },
       views: [{ zoomScale: 85, zoomScaleNormal: 85 }]
     });
-    [6.25, 18.75, 8.375, 11.875, 8.125, 6.625, 6.625, 6.625, 6.625, 11, 9].forEach(function (w, i) {
+    COL_WIDTHS.forEach(function (w, i) {
       var col = ws.getColumn(i + 1);
       col.width = w;
       col.font = { name: FONT, size: 11, color: { argb: 'FF000000' }, charset: 129, family: 3 };
@@ -323,37 +402,17 @@ var Roster = (function () {
     blocks.forEach(function (blk, bi) {
       var r0 = 1 + bi * BLOCK_ROWS;
       // 병합을 먼저 하고, 칸마다 원본 서식을 입힙니다 (병합 뒤에 입혀야 테두리가 남습니다)
-      var merge = function (a, b, c, d) { ws.mergeCellsWithoutStyle(a, b, c, d); };
-      merge(r0, 1, r0 + 1, 10);
-      merge(r0 + 2, 1, r0 + 2, 10);
-      for (var c = 1; c <= 5; c++) merge(r0 + 3, c, r0 + 4, c);
-      merge(r0 + 3, 6, r0 + 3, 9);
-      merge(r0 + 3, 10, r0 + 4, 10);
-      var sr = r0 + 5 + STUDENT_ROWS;
-      for (var k = 0; k < 5; k++) {
-        merge(sr + k, 2, sr + k, 3); merge(sr + k, 4, sr + k, 5); merge(sr + k, 6, sr + k, 8); merge(sr + k, 9, sr + k, 10);
-      }
+      blockMerges().forEach(function (m) { ws.mergeCellsWithoutStyle(r0 + m[0], m[1] + 1, r0 + m[2], m[3] + 1); });
+      var v = blockValues(blk).values;
       for (var t = 0; t < BLOCK_ROWS; t++) {
         var row = ws.getRow(r0 + t);
         row.height = TPL_HEIGHTS[t];
-        for (c = 1; c <= COLS; c++) applyStyle(row.getCell(c), TPL_GRID[t][c - 1]);
-      }
-      // 값
-      ws.getCell(r0, 1).value = blk.title;
-      ws.getCell(r0 + 2, 1).value = blk.line;
-      ['번호', '기관(학교)', '학년/반', '신청자', '신청반'].forEach(function (h, i) { ws.getCell(r0 + 3, i + 1).value = h; });
-      ws.getCell(r0 + 3, 6).value = '출석여부';
-      ws.getCell(r0 + 3, 10).value = '비고';
-      for (c = 6; c <= 9; c++) ws.getCell(r0 + 4, c).value = (c - 5) + '교시';
-      for (var i = 0; i < STUDENT_ROWS; i++) {
-        var s = blk.students[i], rr = r0 + 5 + i;
-        if (s || i < CAP) ws.getCell(rr, 1).value = i + 1;
-        if (s) {
-          ws.getCell(rr, 2).value = s.school; ws.getCell(rr, 3).value = s.ban; ws.getCell(rr, 4).value = s.name; ws.getCell(rr, 5).value = blk.tag;
+        for (var c = 1; c <= COLS; c++) {
+          applyStyle(row.getCell(c), TPL_GRID[t][c - 1]);
+          if (v[t][c - 1] !== null) row.getCell(c).value = v[t][c - 1];
         }
       }
-      ['교시', '신청인원', null, '수강인원', null, '결석인원', null, null, '지도교사'].forEach(function (v, i) { if (v) ws.getCell(sr, i + 1).value = v; });
-      for (k = 1; k <= 4; k++) ws.getCell(sr + k, 1).value = k;
+      var sr = r0 + 5 + STUDENT_ROWS;
       ws.getRow(sr + 4).addPageBreak();
     });
     return wb;
@@ -362,7 +421,7 @@ var Roster = (function () {
   return {
     CAP: CAP, officialSchool: officialSchool, normalizeBan: normalizeBan, sortStudents: sortStudents, students: students,
     linkSets: linkSets, split: split, shortTools: shortTools, composeLine: composeLine, defaultSessions: defaultSessions,
-    swapPair: swapPair, titleDate: titleDate, fileName: fileName, buildWorkbook: buildWorkbook,
+    swapPair: swapPair, titleDate: titleDate, fileName: fileName, buildWorkbook: buildWorkbook, byName: byName, blockValues: blockValues, sheetHtml: sheetHtml,
     ROOMS: ROOMS, makeTitle: makeTitle, makeLine: makeLine, autoTag: autoTag, defaultBlock: defaultBlock, parseTitle: parseTitle, parseLine: parseLine, checkBlocks: checkBlocks
   };
 })();

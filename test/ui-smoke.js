@@ -149,7 +149,7 @@ const server = http.createServer((req, res) => {
   if (tag0 !== '기초1') throw new Error('신청반 자동: ' + tag0);
   await page.screenshot({ path: path.join(OUT, '7b-step2.png'), fullPage: true });
   await page.click('[data-x=att-next]');
-  await page.waitForSelector('.xl-tbl');
+  await page.waitForSelector('.xls');
   await page.screenshot({ path: path.join(OUT, '7c-step3.png'), fullPage: true });
   const parts = await page.$$eval('section .row.between b', (bs) => bs.map((b) => b.textContent).filter((t) => /반|마스터/.test(t)));
   console.log('분반 블록:', parts.join(' | '));
@@ -158,7 +158,7 @@ const server = http.createServer((req, res) => {
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-save]')]);
   await dl.saveAs(path.join(OUT, 'att1.xlsx'));
   await page.waitForSelector('[data-x=att-cancel]');
-  await page.click('[data-x=att-cancel][data-i="0"][data-j="0"]');
+  await page.click('[data-x=att-cancel][data-i="0"]');
   const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-save2]')]);
   await dl2.saveAs(path.join(OUT, 'att2.xlsx'));
   await page.screenshot({ path: path.join(OUT, '8-att-saved.png'), fullPage: true });
