@@ -162,6 +162,12 @@ const server = http.createServer((req, res) => {
   const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-save2]')]);
   await dl2.saveAs(path.join(OUT, 'att2.xlsx'));
   await page.screenshot({ path: path.join(OUT, '8-att-saved.png'), fullPage: true });
+  // 처음부터 다시 만들어도 반 설정이 그대로 남아 있어야 함
+  await page.click('[data-x=att-rebuild]');
+  await page.click('[data-x=att-next]');
+  const kept = [await page.inputValue('[data-xi=att-b][data-i="0"][data-f=tool1]'), await page.$eval('[data-xc=att-b][data-i="0"][data-f=room1]', (e) => e.value), await page.inputValue('[data-xi=att-b][data-i="0"][data-f=name]')];
+  if (kept.join('|') !== '스케치북|라온실|기초코딩 오전1반') throw new Error('반 설정이 남아 있지 않음: ' + kept.join('|'));
+  console.log('다시 만들 때 반 설정 유지:', kept.join(' / '));
   console.log('내려받은 파일:', rawDl.suggestedFilename(), dl.suggestedFilename(), dl2.suggestedFilename());
   await page.click('[data-view=settings]');
   await page.waitForSelector('text=수업일');

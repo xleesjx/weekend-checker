@@ -91,4 +91,10 @@ ck = R.checkBlocks([B({ name: '오후1반', time: '오후', room1: '창의실', 
 ok(ck.errors.some((e) => /제목이 같습니다/.test(e.msg)) && ck.errors.some((e) => /반 이름이 비어/.test(e.msg)) && ck.errors.some((e) => /교실을 골라/.test(e.msg)), '같은 제목·빈 칸');
 ok(!R.checkBlocks([B({ name: '기초코딩 오전1반', room1: '라온실', room2: '놀이실' }), B({ name: '오후1반', time: '오후', room1: '라온실', room2: '놀이실' })]).errors.length, '오전·오후는 같은 교실 써도 됨');
 
+const pl = R.parseLine('1-2교시 창의실, 3-4교시 혜윰실(핏츠, 코너드/펑펑 눈내리는 마을)');
+ok(pl && pl.room1 === '창의실' && pl.room2 === '혜윰실' && pl.tool1 === '핏츠, 코너드' && pl.tool2 === '펑펑 눈내리는 마을', '문구에서 교실·교구 읽기');
+const pl2 = R.parseLine('1-4교시 라온실(파이썬)');
+ok(pl2 && pl2.same && pl2.room1 === '라온실' && pl2.tool1 === '파이썬', '1~4교시 문구 읽기');
+ok(R.makeLine(pl) === '1-2교시 창의실, 3-4교시 혜윰실(핏츠, 코너드/펑펑 눈내리는 마을)', '읽은 값으로 같은 문구 다시 만들기');
+
 console.log('출석부 테스트 ' + passed + '개 통과');

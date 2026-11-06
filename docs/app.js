@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '12';
+  var APP_VERSION = '13';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -892,28 +892,59 @@
     return c ? c['시간대'] : '';
   }
 
+  var BLOCK_FIELDS = ['program', 'name', 'same', 'room1', 'room2', 'tool1', 'tool2', 'tag', 'tagEdited'];
+
+  /** 이 PC에서 마지막으로 입력한 반 설정 (저장하기 전에 다시 만들어도 남도록) */
+  function draftKey() { return 'att-blocks:' + S.date; }
+  function saveDraftBlocks() {
+    try {
+      localStorage.setItem(draftKey(), JSON.stringify(S.att.blocks.map(function (b) {
+        var o = { key: b.key };
+        BLOCK_FIELDS.forEach(function (f) { o[f] = b[f]; });
+        return o;
+      })));
+    } catch (e) { /* 무시 */ }
+  }
+  function loadDraftBlocks() {
+    try { return JSON.parse(localStorage.getItem(draftKey()) || 'null') || []; } catch (e) { return []; }
+  }
+
+  /** 예전 저장본(제목·문구만 있는 것)도 칸별 값으로 읽기 */
+  function blockFields(p) {
+    var o = {};
+    BLOCK_FIELDS.forEach(function (f) { if (p[f] !== undefined) o[f] = p[f]; });
+    if (!o.name && p.title) { var pt = Roster.parseTitle(p.title); if (pt) { o.program = pt.program; o.name = pt.name; } }
+    if (!o.room1 && p.line) { var pl = Roster.parseLine(p.line); if (pl) Object.assign(o, pl); }
+    return o;
+  }
+
+  /**
+   * 반 설정 기본값 (가까운 것부터):
+   * ① 이 PC에서 이 수업일에 입력하던 값 ② 이 수업일에 확정 저장한 출석부 ③ 지난 회차 출석부(교구는 비움) ④ 기본값
+   */
   function makeBlocks() {
     var A = S.att;
+    var local = loadDraftBlocks();
+    var same = (S.data.att && S.data.att.data && S.data.att.data.blocks) || [];
     var prev = (S.data.attPrev && S.data.attPrev.blocks) || [];
+    var find = function (list, key) { return list.filter(function (x) { return x.key === key; })[0]; };
     var seq = {};
+    A.from = local.length ? '이 PC에서 입력하던 반 설정' : (same.length ? S.data.att.version + '차 출석부의 반 설정' : (prev.length ? '지난 회차(' + Core.shortDate(S.data.attPrev.date) + ') 반 설정' : ''));
     A.blocks = A.sources.map(function (src) {
       var time = groupTime(src.group);
       seq[time] = (seq[time] || 0) + 1;
       var d = Roster.defaultBlock(src.group, src.part, src.parts, time, seq[time]);
-      var p = prev.filter(function (b) { return b.key === src.key; })[0];
-      var b = { key: src.key, src: src.key, group: src.group, time: time, label: src.label, tool1: '', tool2: '' };
-      if (p) {
-        var pt = p.program ? p : (Roster.parseTitle(p.title) || {});
-        b.program = pt.program || d.program; b.name = pt.name || d.name;
-        b.same = p.same !== undefined ? !!p.same : d.same;
-        b.room1 = p.room1 || ''; b.room2 = p.room2 || '';
-        b.tagEdited = !!p.tagEdited; b.tag = b.tagEdited ? p.tag : Roster.autoTag(b.name);
-      } else {
-        Object.assign(b, d);
-        b.tag = Roster.autoTag(b.name); b.tagEdited = false;
-      }
+      var b = { key: src.key, src: src.key, group: src.group, time: time, label: src.label };
+      Object.assign(b, d);
+      var hit = find(local, src.key) || find(same, src.key);
+      var p = find(prev, src.key);
+      if (hit) Object.assign(b, blockFields(hit));
+      else if (p) { Object.assign(b, blockFields(p)); b.tool1 = ''; b.tool2 = ''; }
+      b.same = !!b.same;
+      if (!b.tagEdited) b.tag = Roster.autoTag(b.name);
       return b;
     });
+    saveDraftBlocks();
   }
 
   function buildDraft() {
@@ -1013,6 +1044,7 @@
         '<div class="row"><button class="btn" data-x="att-gohome">명단 올리러 가기</button></div></section>' + navBar(false, '다음: 반 설정 →');
     } else if (A.step === 2) {
       var ck = blockChecks();
+      if (A.from) html += '<section class="card pad small" style="background:#F0FDF4;border-color:#BBF7D0">✔ <b>' + esc(A.from) + '</b>을(를) 불러왔습니다. 바뀐 부분만 고치면 됩니다.</section>';
       html += '<section class="card pad small muted" style="line-height:1.8">② 출석부 맨 위 두 줄입니다. <b>파란 테두리 칸</b>만 고르거나 입력하면 됩니다. 날짜는 자동으로 들어가고, 신청반 표기는 반 이름에서 자동으로 만들어집니다. 교구는 수업 사이를 <b>/</b>, 같은 수업 안의 여러 교구를 <b>,</b> 로 나눕니다(예: <b>핏츠, 코너드/펑펑 눈내리는 마을</b>).</section>' +
         A.blocks.map(function (b, i) { return blockCard(b, i, ck); }).join('') + navBar(true, '다음: 분반·학교명 정리 →');
     } else if (A.step === 3) {
@@ -1095,6 +1127,7 @@
     setBusy(true);
     return api('attSave', { date: S.date, data: data }).then(function (res) {
       return downloadExcel(data, res.version).then(function () {
+        try { localStorage.removeItem(draftKey()); } catch (e) { /* 무시 */ }
         toast(res.version + '차 출석부를 저장하고 ' + Roster.fileName(S.date, res.version) + ' 을 내려받았습니다.');
         S.att = null;
         return load(S.date);
@@ -1218,6 +1251,7 @@
     else if (x === 'att-b') {
       var b = A.blocks[+el.getAttribute('data-i')], f = el.getAttribute('data-f');
       b[f] = el.type === 'checkbox' ? el.checked : el.value;
+      saveDraftBlocks();
       render();
     }
   }
@@ -1253,6 +1287,7 @@
         if (ti) ti.value = b.tag;
       }
       updatePreview(i);
+      saveDraftBlocks();
     } else if (x === 'att-ef') {
       A.data.blocks[+el.getAttribute('data-i')][el.getAttribute('data-f')] = el.value;
       if (!A.dirty) { A.dirty = true; var bt = document.querySelector('[data-x=att-save2]'); if (bt) bt.disabled = false; }

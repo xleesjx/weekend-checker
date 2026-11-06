@@ -229,6 +229,17 @@ var Roster = (function () {
     return m ? { program: m[1], name: m[2] } : null;
   }
 
+  /** 교실·교구 문구 → 칸별 값 (예전 저장본 읽기용) */
+  function parseLine(line) {
+    var t = str(line), m;
+    if ((m = /^1-4교시\s*([^(]+?)\s*\((.*)\)$/.exec(t))) return { same: true, room1: m[1], room2: '', tool1: m[2], tool2: '' };
+    if ((m = /^1-2교시\s*([^,]+?)\s*,\s*3-4교시\s*([^(]+?)\s*\((.*)\)$/.exec(t))) {
+      var k = m[3].indexOf('/');
+      return { same: false, room1: m[1], room2: m[2], tool1: k >= 0 ? m[3].slice(0, k) : m[3], tool2: k >= 0 ? m[3].slice(k + 1) : '' };
+    }
+    return null;
+  }
+
   /**
    * 반 설정 검사. blocks: [{key, time(오전/오후), group, program, name, room1, room2, same, tool1, tool2}]
    * 반환: { errors: [{i, msg}], warns: [{i, msg}] }
@@ -352,7 +363,7 @@ var Roster = (function () {
     CAP: CAP, officialSchool: officialSchool, normalizeBan: normalizeBan, sortStudents: sortStudents, students: students,
     linkSets: linkSets, split: split, shortTools: shortTools, composeLine: composeLine, defaultSessions: defaultSessions,
     swapPair: swapPair, titleDate: titleDate, fileName: fileName, buildWorkbook: buildWorkbook,
-    ROOMS: ROOMS, makeTitle: makeTitle, makeLine: makeLine, autoTag: autoTag, defaultBlock: defaultBlock, parseTitle: parseTitle, checkBlocks: checkBlocks
+    ROOMS: ROOMS, makeTitle: makeTitle, makeLine: makeLine, autoTag: autoTag, defaultBlock: defaultBlock, parseTitle: parseTitle, parseLine: parseLine, checkBlocks: checkBlocks
   };
 })();
 
