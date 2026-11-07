@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '22';
+  var APP_VERSION = '23';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -221,7 +221,7 @@
     setBusy(false);
   }
 
-  async function uploadFromFiles(fileList) {
+  async function uploadFromFiles(fileList, extras) {
     if (S.busy) return;
     setBusy(true);
     try {
@@ -234,7 +234,7 @@
         picked.push(f);
       });
       if (other) toast('명단 파일이 아닌 ' + other + '개는 건너뛰었습니다.');
-      await sendFiles(picked, stat);
+      await sendFiles(picked, stat, extras);
     } catch (e) { toast(e.message); }
     setBusy(false);
   }
@@ -272,12 +272,15 @@
 
   function receiveCms(src, d) {
     var list = Array.isArray(d.files) ? d.files.slice(0, 40) : [];
-    var files = [];
+    var files = [], extras = {};
     list.forEach(function (f) {
       if (!f || typeof f.name !== 'string' || !(f.bytes instanceof ArrayBuffer) || !f.bytes.byteLength || f.bytes.byteLength > 5e6) return;
       var at = +f.at || Date.now();
       files.push({ file: new File([f.bytes], f.name.slice(0, 120), { lastModified: at }), title: String(f.title || '').slice(0, 200) });
+      // 관리자 화면에서 읽은 신청일시·취소 시각 (신청일련번호별)
+      if (f.extra && typeof f.extra === 'object') Object.keys(f.extra).forEach(function (k) { extras[k] = f.extra[k]; });
     });
+    var nCancel = Object.keys(extras).filter(function (k) { return extras[k] && extras[k].c; }).length;
     cmsReply(src, { type: 'wc-received', count: files.length });
     if (!files.length) { cmsReply(src, { type: 'wc-done', ok: false, message: '받은 명단 파일이 없습니다.' }); return; }
     cmsBusy = true;
@@ -287,13 +290,14 @@
       '<h2 style="margin:0">명단 ' + files.length + '개가 왔습니다</h2>' +
       '<p style="margin:0">올릴 회차: <b>' + (round ? esc(round.n) + '회차 · ' : '') + esc(md(S.date)) + '</b> <span class="muted small">(다른 회차라면 [취소] 후 회차를 바꾸고 다시 보내 주세요)</span></p>' +
       '<div class="small" style="max-height:240px;overflow:auto;line-height:1.8">' + files.map(function (f) { return '· ' + esc(f.title || f.file.name); }).join('<br>') + '</div>' +
+      (Object.keys(extras).length ? '<p class="small" style="margin:0">관리자 화면에서 <b>신청일시</b> ' + Object.keys(extras).length + '명 · <b>취소 시각</b> ' + nCancel + '명도 함께 받았습니다.</p>' : '') +
       '<p class="muted small" style="margin:0">[명단 올리기]와 똑같이 처리합니다. 접수 기간 밖이거나 이미 올라간 것보다 오래된 명단은 건너뜁니다.</p>' +
       '<div class="row" style="justify-content:flex-end"><button class="btn" data-m="no">취소</button><button class="btn primary" data-m="yes">올리기</button></div>';
     modal(html, function (m, b, w, close) {
       close();
       if (m !== 'yes') { cmsBusy = false; cmsReply(src, { type: 'wc-cancel' }); return; }
       S.view = 'home'; render(); window.scrollTo(0, 0);
-      uploadFromFiles(files.map(function (f) { return f.file; })).then(function () {
+      uploadFromFiles(files.map(function (f) { return f.file; }), extras).then(function () {
         var u = S.lastUpload || { results: [] };
         cmsReply(src, { type: 'wc-done', ok: true, results: (u.results || []).map(function (r) { return { result: r.result, title: r.cls || r.title || r.file, detail: r.detail || '' }; }),
           skipped: (u.stat && u.stat.outside) || 0, date: S.date });
@@ -315,7 +319,7 @@
     return { fileName: file.name, fileTs: meta.ts, header: header, title: rows.length ? rows[0][1] : '', rows: rows };
   }
 
-  async function sendFiles(files, stat) {
+  async function sendFiles(files, stat, extras) {
     var parsed = [], empty = 0, bad = 0;
     for (var i = 0; i < files.length; i++) {
       try {
@@ -337,14 +341,14 @@
       toast(stat.found ? '새로 올릴 명단이 없습니다.' : '폴더에서 명단 파일을 찾지 못했습니다.');
       return;
     }
-    var res = await api('upload', { date: S.date, files: send });
+    var res = await api('upload', { date: S.date, files: send, extras: extras || null });
     summary.results = res.results;
     S.lastUpload = summary;
     if (res.needMap && res.needMap.length) {
       var maps = await askMapping(res.needMap);
       if (maps) {
         var again = send.filter(function (f) { return res.needMap.some(function (n) { return n.file === f.fileName; }); });
-        var res2 = await api('upload', { date: S.date, files: again, mappings: maps });
+        var res2 = await api('upload', { date: S.date, files: again, mappings: maps, extras: extras || null });
         summary.results = summary.results.filter(function (r) { return r.result !== '연결 필요'; }).concat(res2.results);
       }
     }
@@ -522,7 +526,9 @@
       var title = '';
       if (i === 1) { title = v; v = r.cls; }
       var cls = hl && hl[i] ? ' class="' + hl[i] + '"' : '';
-      return '<td' + cls + ' title="' + esc(title || r.cells[i]) + '">' + esc(v) + (extra && extra[i] ? ' ' + extra[i] : '') + '</td>';
+      if (i === 0 && r.appliedAt) title = '신청 ' + r.appliedAt;
+      var more = i === 12 && r.cancelAt && /예약취소/.test(v) ? '<div class="small muted">' + esc(shortTs(r.cancelAt)) + ' 취소</div>' : '';
+      return '<td' + cls + ' title="' + esc(title || r.cells[i]) + '">' + esc(v) + more + (extra && extra[i] ? ' ' + extra[i] : '') + '</td>';
     }).join('');
   }
 
@@ -762,6 +768,11 @@
     });
     return w;
   }
+  /** '2026-11-06 19:16:58' → '11/6 19:16' */
+  function shortTs(t) {
+    var m = /^\d{4}-(\d{2})-(\d{2})[ T](\d{2}:\d{2})/.exec(String(t || ''));
+    return m ? (+m[1]) + '/' + (+m[2]) + ' ' + m[3] : String(t || '');
+  }
   function mmdd(date) { return date.slice(5, 7) + date.slice(8, 10); }
   function md(date) { return (+date.slice(5, 7)) + '월 ' + (+date.slice(8, 10)) + '일'; }
 
@@ -931,7 +942,7 @@
       deleteAbs(a);
       return;
     }
-    saveAbs({ date: S.date, no: r.no, name: r.cells[9], school: r.cells[10], ban: r.cells[11], cls: r.cls, phone: r.cells[3],
+    saveAbs({ date: S.date, no: r.no, name: r.cells[9], school: r.cells[10], ban: r.cells[11], cls: r.cls, phone: r.cells[3], cancelAt: r.cancelAt ? shortTs(r.cancelAt) : '',
       src: r.cancelled ? '예약취소' : '당일 결석', reason: r.cancelled ? '기한 후 취소' : '당일 무단결석' })
       .then(function () { toast(r.cells[9] + ' 학생을 결석으로 표시했습니다. 사유는 결석 메뉴에서 고칠 수 있습니다.', 2500); });
   }
@@ -993,7 +1004,7 @@
             '<td style="text-align:center"><input type="checkbox" data-xc="abs-ex" data-id="' + esc(a.id) + '"' + (a.excused ? ' checked' : '') + ' aria-label="출석 인정" style="width:20px;height:20px"></td>' +
             '<td><input type="text" value="' + esc(a.memo) + '" placeholder="메모" data-xc="abs-field" data-id="' + esc(a.id) + '" data-f="memo" aria-label="메모" style="min-width:160px;width:100%"></td>' +
             '<td>' + (a.phone ? '<a href="tel:' + esc(String(a.phone).replace(/[^0-9]/g, '')) + '">' + esc(a.phone) + '</a>' : '') + '</td>' +
-            '<td class="muted small">' + esc(a.src || '') + '</td><td><button class="btn sm" data-x="abs-del" data-id="' + esc(a.id) + '" title="기록 삭제" aria-label="기록 삭제">✕</button></td></tr>';
+            '<td class="muted small">' + esc(a.src || '') + (absCancelAt(a) ? '<br><b style="color:var(--red)">' + esc(absCancelAt(a)) + ' 취소</b>' : '') + '</td><td><button class="btn sm" data-x="abs-del" data-id="' + esc(a.id) + '" title="기록 삭제" aria-label="기록 삭제">✕</button></td></tr>';
         }).join('') + '</tbody></table></div>' : '<div class="pad muted">이 수업일의 결석·취소 기록이 없습니다.</div>') + '</section>';
     setTimeout(absIndicator, 0);
     return html;
@@ -1002,6 +1013,13 @@
   function absNewRow() {
     return '<div class="row abs-new" style="gap:8px;flex-wrap:nowrap;margin-bottom:6px"><input type="text" class="an" placeholder="학생명" style="width:110px" aria-label="학생명">' +
       '<input type="text" class="as" placeholder="학교 (예: 가온초)" style="width:160px" aria-label="학교"><input type="text" class="ab" placeholder="학년반 (예: 3-2)" style="width:130px" aria-label="학년반"></div>';
+  }
+
+  /** 결석 기록의 취소 시각 (기록에 없으면 이번 명단에서) */
+  function absCancelAt(a) {
+    if (a.cancelAt) return a.cancelAt;
+    var r = a.no ? rowByNo(a.no) : null;
+    return r && r.cancelAt ? shortTs(r.cancelAt) : '';
   }
 
   /** 결석 메뉴에서 여러 명 직접 등록 (학생명·학교·학년반) → 모두 기한 후 취소. 화면은 한 번만 다시 그립니다. */
@@ -1029,7 +1047,7 @@
     var r = (S.data.rows || []).filter(function (x) { return Core.str(x.cells[9]) === n && Core.schoolKey(x.cells[10]) === Core.schoolKey(sc); })[0];
     if (r && absOf(r.no)) return 'dup';
     if ((S.data.absences || []).some(function (a) { return a.name === n && Core.schoolKey(a.school) === Core.schoolKey(sc); })) return 'dup';
-    saveAbs({ date: S.date, no: r ? r.no : '', name: n, school: off.ok ? off.name : sc, ban: Core.normalizeBan(bn).ban, cls: r ? r.cls : '', phone: r ? r.cells[3] : '',
+    saveAbs({ date: S.date, no: r ? r.no : '', name: n, school: off.ok ? off.name : sc, ban: Core.normalizeBan(bn).ban, cls: r ? r.cls : '', phone: r ? r.cells[3] : '', cancelAt: r && r.cancelAt ? shortTs(r.cancelAt) : '',
       src: '수기 입력', reason: '기한 후 취소' }, true);
     return r ? 'ok' : 'nomatch';
   }
@@ -1335,7 +1353,7 @@
     var schools = S.data.schools || [], idx = Core.buildSchoolIndex(schools);
     var waitsBy = {};
     S.data.rows.filter(function (r) { return !r.cancelled && Core.str(r.cells[12]) === '추가대기'; })
-      .sort(function (a, b) { return (a.seq - b.seq) || (+a.no - +b.no); })
+      .sort(function (a, b) { return (a.appliedAt && b.appliedAt && a.appliedAt !== b.appliedAt ? (a.appliedAt < b.appliedAt ? -1 : 1) : 0) || (a.seq - b.seq) || (+a.no - +b.no); })
       .forEach(function (r) {
         var it = Core.interpret(r.cells, idx), g = groupOfRow(r);
         (waitsBy[g] = waitsBy[g] || []).push({
@@ -1465,7 +1483,7 @@
 
   function absForStudent(s, b) {
     var r = s.no ? rowByNo(s.no) : null;
-    return { date: S.date, no: s.no, name: s.name, school: s.school, ban: s.ban, cls: b.tag, phone: r ? r.cells[3] : '', src: '출석부 취소 처리', reason: '기한 후 취소' };
+    return { date: S.date, no: s.no, name: s.name, school: s.school, ban: s.ban, cls: b.tag, phone: r ? r.cells[3] : '', cancelAt: r && r.cancelAt ? shortTs(r.cancelAt) : '', src: '출석부 취소 처리', reason: '기한 후 취소' };
   }
 
   /* ───────── 새 기능 이벤트 ───────── */

@@ -13,7 +13,8 @@ var SHEET = {
 };
 var TOPIC_SHEET_DEFAULT = '165RlpeCfhR9Z4n_Qq2IoPMTXBlkSiUWZMyBBhO77MBw';
 var TOPIC_TAB_DEFAULT = '하반기';
-var EXTRA = ['수업일', '시간대', '수업반', '접수명', '점검결과', '처리상태', '처리자', '처리시각', '메모', '업로드시각', '업로더', '파일명', '순번', '처음 올라온 시각'];
+// 신청일시·취소시각: 엑셀에는 없고 관리자 화면에만 있는 값 (즐겨찾기 버튼이 화면에서 읽어 함께 보냄)
+var EXTRA = ['수업일', '시간대', '수업반', '접수명', '점검결과', '처리상태', '처리자', '처리시각', '메모', '업로드시각', '업로더', '파일명', '순번', '처음 올라온 시각', '신청일시', '취소시각'];
 var LIST_HEADER, X, HEADERS;
 
 /** Core.gs 를 쓰는 값은 파일 순서와 상관없이 처음 호출될 때 만듭니다. */
@@ -140,6 +141,7 @@ function writeTable_(name, rows) {
     return o;
   }));
   sh.clearContents();
+  if (sh.getMaxColumns && sh.getMaxColumns() < header.length) sh.insertColumnsAfter(sh.getMaxColumns(), header.length - sh.getMaxColumns());
   var rg = sh.getRange(1, 1, all.length, header.length);
   rg.setNumberFormat('@');
   rg.setValues(all);
@@ -210,7 +212,8 @@ function roundView_(ctx, date, list, statuses) {
   list.forEach(function (r, i) {
     if (!Core.instanceCovers(r[X['수업일']], date)) return;
     var cls = byName[r[X['접수명']]] || ctx.classes.filter(function (c) { return c['접수명'] === r[X['접수명']]; })[0] || null;
-    rows.push({ idx: i, no: r[0], row: r.slice(0, Core.HEADER.length), cls: cls, inst: r[X['수업일']], seq: +r[X['순번']] || 0, firstSeen: r[X['처음 올라온 시각']] || '' });
+    rows.push({ idx: i, no: r[0], row: r.slice(0, Core.HEADER.length), cls: cls, inst: r[X['수업일']], seq: +r[X['순번']] || 0, firstSeen: r[X['처음 올라온 시각']] || '',
+      appliedAt: r[X['신청일시']] || '', cancelAt: r[X['취소시각']] || '' });
   });
   var result = Core.analyzeRound(rows, ctx, date);
   rows.forEach(function (e) {
@@ -326,7 +329,7 @@ API.state = function (req, user) {
     if (u[0] > o.last) o.last = u[0];
   });
   out.rows = view.rows.map(function (e) {
-    return { no: e.no, cells: e.row, cls: e.cls ? e.cls['접수명'] : '', inst: e.inst, seq: e.seq, issues: e.issues, level: e.level,
+    return { no: e.no, cells: e.row, cls: e.cls ? e.cls['접수명'] : '', inst: e.inst, seq: e.seq, issues: e.issues, level: e.level, appliedAt: e.appliedAt, cancelAt: e.cancelAt,
       cancelled: e.cancelled, status: e.status ? { s: e.status.s, who: e.status.who, at: e.status.at, memo: e.status.memo } : null, changed: e.changed,
       isNew: (function () { var o = upAt[e.inst + '|' + (e.cls ? e.cls['접수명'] : '')]; return !!(o && e.firstSeen && o.first !== o.last && e.firstSeen === o.last); })() };
   });
@@ -474,6 +477,19 @@ API.topics = function (req) {
   return { items: items };
 };
 
+/** 화면에서 읽은 값 검사: { 신청일련번호: { a: 'YYYY-MM-DD HH:MM:SS', c: 같은 형식 } } */
+function cleanExtras_(x) {
+  var out = {}, n = 0, re = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/;
+  if (!x || typeof x !== 'object') return out;
+  Object.keys(x).forEach(function (k) {
+    if (n > 5000 || !/^\d{1,12}$/.test(k) || !x[k] || typeof x[k] !== 'object') return;
+    var a = Core.str(x[k].a), c = Core.str(x[k].c);
+    out[k] = { a: re.test(a) ? a : '', c: re.test(c) ? c : '' };
+    n++;
+  });
+  return out;
+}
+
 API.upload = function (req, user) {
   return withLock_(function () {
     var ctx = loadCtx_();
@@ -493,6 +509,7 @@ API.upload = function (req, user) {
     var list = readTable_(SHEET.LIST).rows;
     var uploads = readTable_(SHEET.UPLOADS).rows;
     var results = [], needMap = [], logs = [];
+    var extras = cleanExtras_(req.extras);
 
     var files = (req.files || []).slice().sort(function (a, b) { return a.fileTs < b.fileTs ? -1 : 1; });
     var checked = files.map(function (f) {
@@ -528,8 +545,12 @@ API.upload = function (req, user) {
       uploads.forEach(function (u) { if (u[4] === inst && u[5] === cls['접수명'] && /^반영/.test(u[7]) && (!prev || u[3] > prev[3])) prev = u; });
       if (prev && meta.ts <= prev[3]) { res.result = '건너뜀'; res.detail = '이미 더 최근 명단(' + prev[3].slice(11, 16) + ' 받은 파일)이 올라가 있음'; return; }
 
-      var seenBefore = {};
-      list.forEach(function (r) { if (r[X['수업일']] === inst && r[X['접수명']] === cls['접수명']) seenBefore[r[0]] = r[X['처음 올라온 시각']] || r[X['업로드시각']]; });
+      var seenBefore = {}, known = {};
+      list.forEach(function (r) {
+        if (r[X['수업일']] !== inst || r[X['접수명']] !== cls['접수명']) return;
+        seenBefore[r[0]] = r[X['처음 올라온 시각']] || r[X['업로드시각']];
+        known[r[0]] = { a: r[X['신청일시']] || '', c: r[X['취소시각']] || '' };
+      });
       list = list.filter(function (r) { return !(r[X['수업일']] === inst && r[X['접수명']] === cls['접수명']); });
       f.rows.forEach(function (cells, i) {
         var r = [];
@@ -537,6 +558,10 @@ API.upload = function (req, user) {
         r[X['수업일']] = inst; r[X['시간대']] = cls['시간대']; r[X['수업반']] = cls['수업반']; r[X['접수명']] = cls['접수명'];
         r[X['업로드시각']] = at; r[X['업로더']] = user.name; r[X['파일명']] = f.fileName; r[X['순번']] = String(i + 1);
         r[X['처음 올라온 시각']] = seenBefore[r[0]] || at;
+        // 화면에서 읽은 신청일시·취소시각 (이번에 못 읽었으면 전에 알던 값 유지, 예약취소가 풀리면 취소시각 지움)
+        var ex = extras[r[0]] || {}, old = known[r[0]] || {};
+        r[X['신청일시']] = ex.a || old.a || '';
+        r[X['취소시각']] = r[12] === '예약취소' ? (ex.c || old.c || '') : '';
         for (var j = 0; j < LIST_HEADER.length; j++) if (r[j] === undefined) r[j] = '';
         list.push(r);
       });

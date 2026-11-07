@@ -23,11 +23,51 @@ env.ctx.writeTable_('점검자', [['owner@example.com', '이승주']]);
 // 브라우저 날짜를 11/6(금)으로 고정: 11/7 수업이 접수 기간 안
 const NOW = new Date('2026-11-06T15:00:00+09:00');
 
+// 마스터 반은 12명(가짜)으로 늘려 신청자 화면이 10명씩 두 쪽으로 나뉘는 경우를 시험
+const MASTER12 = files.master.rows.concat(Array.from({ length: 9 }, (_, k) => {
+  const r = files.master.rows[0].slice();
+  r[0] = String(250900 + k); r[2] = '보호자' + k; r[3] = '010-0000-09' + String(k).padStart(2, '0'); r[9] = '가짜' + k; r[10] = '가온초등학교'; r[11] = '6-' + (k + 1); r[12] = k === 8 ? '예약취소' : '승인'; r[13] = 'fake_m' + k;
+  r[8] = r[9] + ' ' + r[10] + ' ' + r[11];
+  return r;
+}));
+// 신청자 목록 화면 (실제 화면과 같은 구조, 가짜 사람). 실제 서버처럼 한 쪽에 10명씩
+const CANCEL_AT = '2026-11-06 19:16:58';
+function aplyPage(c, page) {
+  const rows = c.rows.slice((page - 1) * 10, page * 10);
+  return '<!doctype html><meta charset="utf-8"><table><tbody>' + rows.map((r, k) => `<tr>
+    <td class="text-center"><input type="checkbox" name="sns" value="${r[0]}"></td><td class="text-center">${(page - 1) * 10 + k + 1}</td>
+    <td><a href="#AplyView" onclick="opAplyView('${r[0]}');return false;">${r[2]}</a></td><td class="text-center">${r[3]}</td>
+    <td class="text-center">2026-11-05 1${k % 10}:18:45.0</td><td class="text-center">\n  개인\n</td>
+    <td class="text-center">\n\n ${r[12] === '예약취소' ? '예약취소<br>(' + CANCEL_AT + '.0)' : r[12]}\n</td>
+    <td class="text-center"><div class="text-info"><span>${r[12] === '예약취소' ? '승인취소' : '승인'}</span></div></td>
+    <td class="text-center"><a href="#5" onclick="opUpdateAplyFnsh('${r[0]}');"><div><span>미이수</span></div></a></td><td class="text-center"></td>
+    <td class="text-center">${r[8]}</td></tr>`).join('') + '</tbody></table>';
+}
+let excelCalls = 0, screenCalls = 0;
+async function cmsHandler(route) {
+  const u = new URL(route.request().url());
+  if (u.pathname.endsWith('BD_selectReservationMngList.do')) return route.fulfill({ body: listPage, contentType: 'text/html; charset=utf-8' });
+  if (u.pathname.endsWith('BD_selectReservationAplyList.do')) {
+    screenCalls++;
+    const c = CLASSES.find((x) => x.sn === u.searchParams.get('q_rsvtRegSn'));
+    return route.fulfill({ body: aplyPage(c, +u.searchParams.get('q_currPage') || 1), contentType: 'text/html; charset=utf-8' });
+  }
+  if (u.pathname.endsWith('ND_excelDownload.do')) {
+    excelCalls++;
+    const q = new URLSearchParams(route.request().postData());
+    const c = CLASSES.find((x) => x.sn === q.get('q_rsvtRegSn'));
+    if (!c || q.get('excelKey') !== 'reservationNoContsCceAplyList') return route.fulfill({ status: 200, body: '<html><body>로그인이 필요합니다</body></html>', contentType: 'text/html' });
+    return route.fulfill({ body: toXls(c.rows), contentType: 'application/vnd.ms-excel',
+      headers: { 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent('통합예약신청자목록.xls') } });
+  }
+  return route.fulfill({ status: 404, body: '' });
+}
+
 // 가짜 관리자 목록 화면: 11/7 수업 3개(접수중·접수마감) + 다음 주 수업 1개(체크 안 됨)
 const CLASSES = [
   { sn: '4790', title: files.basic.rows[0][1].trim(), date: '2026-11-07 ~ 2026-11-07', status: '접수중', rows: files.basic.rows },
   { sn: '4791', title: files.explore.rows[0][1].trim(), date: '2026-11-07 ~ 2026-11-07', status: '접수마감', rows: files.explore.rows },
-  { sn: '4792', title: files.master.rows[0][1].trim(), date: '2026-11-07 ~ 2026-12-05', status: '접수중', rows: files.master.rows },
+  { sn: '4792', title: files.master.rows[0][1].trim(), date: '2026-11-07 ~ 2026-12-05', status: '접수중', rows: MASTER12 },
   { sn: '4793', title: '[초2~3학년]11월14일 주말SW교실 기초코딩 오전반', date: '2026-11-14 ~ 2026-11-14', status: '접수중', rows: [] }
 ];
 const listPage = '<!doctype html><meta charset="utf-8"><title>통합예약</title><table><thead><tr><th>순번</th><th>누리집명</th><th>예약구분</th><th>신청명</th><th>운영일시</th><th>신청현황</th><th>접수상태</th><th>콘텐츠관리</th><th>휴일관리</th><th>신청관리</th></tr></thead><tbody>' +
@@ -66,20 +106,7 @@ const server = http.createServer((req, res) => {
     const out = env.call(body.action, body);
     await route.fulfill({ body: JSON.stringify(out), contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' } });
   });
-  let excelCalls = 0;
-  await ctx.route('https://cms.test/**', async (route) => {
-    const u = new URL(route.request().url());
-    if (u.pathname.endsWith('BD_selectReservationMngList.do')) return route.fulfill({ body: listPage, contentType: 'text/html; charset=utf-8' });
-    if (u.pathname.endsWith('ND_excelDownload.do')) {
-      excelCalls++;
-      const q = new URLSearchParams(route.request().postData());
-      const c = CLASSES.find((x) => x.sn === q.get('q_rsvtRegSn'));
-      if (!c || q.get('excelKey') !== 'reservationNoContsCceAplyList') return route.fulfill({ status: 200, body: '<html><body>로그인이 필요합니다</body></html>', contentType: 'text/html' });
-      return route.fulfill({ body: toXls(c.rows), contentType: 'application/vnd.ms-excel',
-        headers: { 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent('통합예약신청자목록.xls') } });
-    }
-    return route.fulfill({ status: 404, body: '' });
-  });
+  await ctx.route('https://cms.test/**', cmsHandler);
 
   const cms = await ctx.newPage();
   cms.on('pageerror', (e) => errors.push('관리자: ' + e.message));
@@ -117,6 +144,24 @@ const server = http.createServer((req, res) => {
   const up = env.ctx.readTable_('업로드기록').rows;
   if (up.length !== 3) throw new Error('업로드 기록 수: ' + up.length);
   if (excelCalls !== 3) throw new Error('엑셀 요청 수: ' + excelCalls);
+  if (screenCalls !== 4) throw new Error('화면 요청 수(마스터 2쪽 포함 4): ' + screenCalls);
+  // 화면에서 읽은 신청일시·취소 시각이 저장됨
+  const st = env.call('state', { date: '2026-11-07' });
+  const cx = st.rows.filter((r) => r.cancelAt);
+  if (cx.length !== 2 || !cx.every((r) => r.cancelAt === CANCEL_AT && r.cells[12] === '예약취소')) throw new Error('취소 시각: ' + JSON.stringify(cx.map((r) => [r.no, r.cancelAt])));
+  if (st.rows.filter((r) => r.appliedAt).length !== 23) throw new Error('신청일시 수: ' + st.rows.filter((r) => r.appliedAt).length);
+  console.log('화면 값: 신청일시 23명, 취소 시각 2명 저장 (2쪽 화면 포함)');
+  const panelDetail = await cms.$$eval('#excelDownPanel .xd-s', (x) => x.map((e) => e.textContent));
+  console.log('패널 표시:', panelDetail.slice(0, 3).join(' | '));
+  // 전체 명단에 취소 시각 표시
+  await app.click('[data-view=full]');
+  await app.waitForSelector('text=11/6 19:16 취소');
+  await app.screenshot({ path: path.join(OUT, '3b-full-cancel.png'), fullPage: false });
+  // 폴더 업로드처럼 화면 값 없이 다시 올려도 이미 아는 값은 유지
+  const env2res = env.call('upload', { date: '2026-11-07', files: [require('./fake-data').parseXls(toXls(files.explore.rows), '통합예약신청자목록 - 2026-11-06T160000.000.xls')] });
+  if (env2res.results[0].result !== '반영') throw new Error('다시 올리기: ' + JSON.stringify(env2res.results));
+  if (!env.call('state', { date: '2026-11-07' }).rows.some((r) => r.cancelAt === CANCEL_AT && r.cells[12] === '예약취소')) throw new Error('화면 값 없이 다시 올렸더니 취소 시각이 사라짐');
+  await app.click('[data-view=home]');
 
   // 다른 곳에서 온 메시지는 무시
   const ignored = await app.evaluate(() => new Promise((resolve) => {
@@ -161,13 +206,7 @@ const server = http.createServer((req, res) => {
     const body = JSON.parse(route.request().postData()); delete body.token;
     await route.fulfill({ body: JSON.stringify(env.call(body.action, body)), contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' } });
   });
-  await ctx2.route('https://cms.test/**', async (route) => {
-    const u = new URL(route.request().url());
-    if (u.pathname.endsWith('BD_selectReservationMngList.do')) return route.fulfill({ body: listPage, contentType: 'text/html; charset=utf-8' });
-    const q = new URLSearchParams(route.request().postData());
-    const c = CLASSES.find((x) => x.sn === q.get('q_rsvtRegSn'));
-    return route.fulfill({ body: toXls(c.rows), contentType: 'application/vnd.ms-excel', headers: { 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent('통합예약신청자목록.xls') } });
-  });
+  await ctx2.route('https://cms.test/**', cmsHandler);
   const app2 = await ctx2.newPage();
   app2.on('pageerror', (e) => errors.push('웹앱2: ' + e.message));
   await app2.goto(APP);
