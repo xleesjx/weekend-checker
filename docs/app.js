@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '25';
+  var APP_VERSION = '26';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -26,7 +26,7 @@
   var toastTimer;
   function toast(msg, ms) {
     var t = document.getElementById('toast');
-    t.textContent = msg; t.className = 'show';
+    t.textContent = msg; t.className = 'show'; S.toastAt = Date.now();
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { t.className = ''; }, ms || 4500);
   }
@@ -145,6 +145,7 @@
       if (S.date !== res.date) { S.att = null; S.sel = {}; }
       S.data = res; S.date = res.date; S.rev = res.rev; S.user = res.user || S.user;
       S.loadedAt = new Date();
+      draftRefresh();
       render();
     }).catch(function (e) { if (e.code !== 'AUTH' && e.code !== 'FORBIDDEN') toast(e.message); })
       .then(function () { setBusy(false); });
@@ -453,6 +454,10 @@
       '<div class="drop" id="drop" style="flex-basis:100%">' + (window.showDirectoryPicker ? '크롬·엣지가 아니라면 여기에 엑셀 파일을 끌어다 놓으세요' : '이 기기에서는 폴더 지정이 안 되어 [명단 올리기]를 누르면 파일을 직접 고릅니다 (명단 올리기는 PC를 권장합니다)') + '</div></section>';
 
     if (S.lastUpload) html += uploadResult(S.lastUpload);
+    if (S.data.att) {
+      var chN = attChanges(S.data.att.data).count;
+      if (chN) html += '<section class="card pad row between" style="border:2px solid #F59E0B"><b>⚠ 최종 마감한 출석부에 변동 사항 ' + chN + '건 (취소·새 승인)</b><button class="btn primary" data-view="att">출석부에서 확인하기</button></section>';
+    }
 
     var steps = [
       ['회차 확인', '수업일 ' + Core.shortDate(S.date), true],
@@ -1325,11 +1330,27 @@
     saveDraftBlocks();
   }
 
+  /** 학생 구성이 바뀌었는지 보는 값 (승인 학생·학교·학반) */
+  function draftSig() {
+    return attStudents().map(function (s) { return s.no + ':' + s.school + ':' + s.ban; }).sort().join('|');
+  }
+  /** 최종 마감 전(작업 중)에는 새 명단이 오면 자동으로 다시 분반·정렬합니다. 반 설정(이름·교실·교구)은 그대로 */
+  function draftRefresh() {
+    var A = S.att;
+    if (!A || A.mode !== 'draft' || A.date !== S.date) return;
+    var sig = draftSig();
+    if (sig === A.sig) return;
+    computeParts(); makeBlocks();
+    A.sig = sig;
+    toast('새 명단이 들어와서 분반을 다시 했습니다. 반 설정은 그대로입니다.', 3500);
+  }
+
   function buildDraft() {
     var old = S.att || {};
     S.att = { mode: 'draft', date: S.date, step: 1, acceptKeep: old.acceptKeep || {}, edits: old.edits || {} };
     computeParts();
     makeBlocks();
+    S.att.sig = draftSig();
     render();
     window.scrollTo(0, 0);
   }
@@ -1354,7 +1375,7 @@
       var k = i + 1, on = !saved && k === n, done = saved || k < n;
       var chip = '<span class="badge" style="background:' + (on ? 'var(--blue);color:#fff' : (done ? '#C7D7FB;color:#1E3A8A' : '#E2E8F0;color:#334155')) + '">' + k + '</span>' + (on ? '<b>' + t + '</b>' : t);
       return !saved && k < n ? '<button class="row small sorth" style="gap:6px" data-x="att-step" data-n="' + k + '">' + chip + '</button>' : '<span class="row small" style="gap:6px">' + chip + '</span>';
-    }).join('') + (saved ? '<b class="small" style="color:#15803D">✔ 확정됨</b>' : '') + '</section>';
+    }).join('') + (saved ? '<b class="small" style="color:#15803D">✔ 최종 마감됨</b>' : '<span class="muted small">작업 중 · 새 명단이 오면 자동으로 다시 분반</span>') + '</section>';
   }
 
   function navBar(prev, nextLabel, nextAct) {
@@ -1444,8 +1465,13 @@
     } else {
       html += '<section class="card pad" style="display:flex;flex-direction:column;gap:10px"><b style="font-size:17px">④ 확인·내려받기</b><div class="tbox"><table class="grid"><thead><tr><th>순서</th><th>제목</th><th>교실·교구</th><th>신청반</th><th>인원</th></tr></thead><tbody>' +
         A.blocks.map(function (b, i) { var s = srcByKey(b.src); return '<tr><td>' + (i + 1) + '</td><td>' + esc(Roster.makeTitle(S.date, b)) + '</td><td>' + esc(Roster.makeLine(b)) + '</td><td>' + esc(b.tag) + '</td><td>' + (s ? s.students.length : 0) + '명</td></tr>'; }).join('') +
-        '</tbody></table></div><p class="muted small" style="margin:0">확정하면 이 배정이 1차로 저장되고 출석부와 <b>연락처 명렬표</b>(학부모 이름·연락처 + 추가대기)가 함께 내려받아집니다. 이후에는 분반을 다시 하지 않고 취소 처리·학생 추가만 합니다.</p></section>' +
-        navBar(true, '확정 저장 · ' + esc(Roster.fileName(S.date, 1)) + ' 내려받기', 'att-save');
+        '</tbody></table></div>' +
+        '<div class="small" style="line-height:1.8;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px 12px"><b>[최종 마감]은 인쇄해서 게시할 때 누릅니다.</b><br>' +
+        '· 누르면 1차로 저장되고 출석부와 <b>연락처 명렬표</b>가 내려받아집니다.<br>' +
+        '· 마감 전에는 새 명단이 올 때마다 <b>자동으로 다시 분반</b>합니다. 아직 접수 중이면 마감하지 말고 기다려도 됩니다.<br>' +
+        '· 마감 후에는 자동으로 바꾸지 않고, 바뀐 내용을 <b>「변동 사항」</b>으로 알려 줍니다. 하나씩 확인하고 승인해야 바뀝니다.</div>' +
+        '<div><button class="btn" data-x="att-preview">미리보기 엑셀 내려받기 (저장 안 함)</button></div></section>' +
+        navBar(true, '최종 마감 · ' + esc(Roster.fileName(S.date, 1)) + ' 내려받기 (인쇄용)', 'att-save');
     }
     return html;
   }
@@ -1487,12 +1513,13 @@
       '<div><button class="btn primary" data-x="att-start">출석부 만들기 시작</button></div></section>';
   }
 
-  function downloadExcel(data, version) {
-    var blocks = (data.blocks || []).map(function (b) {
+  /** only: 이 반(key)만 출력 (마감 후 바뀐 반만) */
+  function downloadExcel(data, version, only, name) {
+    var blocks = (data.blocks || []).filter(function (b) { return !only || only.indexOf(b.key) >= 0; }).map(function (b) {
       return { title: b.title, line: b.line, tag: b.tag, students: (b.students || []).filter(function (s) { return s.status !== '취소'; }) };
     });
     var wb = Roster.buildWorkbook(ExcelJS, blocks, mmdd(S.date));
-    return wb.xlsx.writeBuffer().then(function (buf) { saveBlob(buf, Roster.fileName(S.date, version)); });
+    return wb.xlsx.writeBuffer().then(function (buf) { saveBlob(buf, name || Roster.fileName(S.date, version).replace(/\.xlsx$/, only ? '_바뀐반.xlsx' : '.xlsx')); });
   }
 
   /** 학생 → 명렬표 줄 (학부모 이름·연락처는 원본 명단에서) */
@@ -1503,7 +1530,7 @@
   function groupOfRow(r) { var c = clsInfo(r.cls); return c ? (c['수업반'] || c['접수명']) : r.cls; }
 
   /** 연락처 명렬표: 출석부와 같은 반·같은 순서 + 반마다 추가대기(최신 명단 기준, 신청 순서) */
-  function downloadContacts(data, version) {
+  function downloadContacts(data, version, only) {
     var schools = S.data.schools || [], idx = Core.buildSchoolIndex(schools);
     var waitsBy = {};
     S.data.rows.filter(function (r) { return !r.cancelled && Core.str(r.cells[12]) === '추가대기'; })
@@ -1514,7 +1541,7 @@
           school: Core.officialSchool(it.school || it.home || r.cells[10], schools).name, ban: Core.normalizeBan(it.grade || r.cells[11]).ban,
           name: it.name || Core.str(r.cells[9]), parent: Core.str(r.cells[2]), phone: Core.str(r.cells[3]) });
       });
-    var all = data.blocks || [];
+    var all = (data.blocks || []).filter(function (b) { return !only || only.indexOf(b.key) >= 0; });
     var gOf = function (b) { return String(b.key || '').split('#')[0]; };
     var lastOf = {};
     all.forEach(function (b, i) { lastOf[gOf(b)] = i; });
@@ -1525,12 +1552,12 @@
         students: (b.students || []).filter(function (s) { return s.status !== '취소'; }).map(contactOf),
         waits: lastOf[g] === i ? (waitsBy[g] || []) : [], waitLabel: parts > 1 ? g + ' 공통' : '' };
     });
-    // 승인 학생이 없어 출석부에 없는 반도 추가대기는 따로 붙입니다
-    Object.keys(waitsBy).forEach(function (g) {
+    // 승인 학생이 없어 출석부에 없는 반도 추가대기는 따로 붙입니다 (전체 출력일 때만)
+    if (!only) Object.keys(waitsBy).forEach(function (g) {
       if (lastOf[g] === undefined) blocks.push({ title: md(S.date) + ' ' + g, line: '출석부에 없는 반 (승인된 학생 없음)', students: [], waitsOnly: true, waits: waitsBy[g], waitLabel: '' });
     });
     var wb = Roster.buildContactBook(ExcelJS, blocks, mmdd(S.date));
-    return wb.xlsx.writeBuffer().then(function (buf) { saveBlob(buf, Roster.contactFileName(S.date, version)); });
+    return wb.xlsx.writeBuffer().then(function (buf) { saveBlob(buf, Roster.contactFileName(S.date, version).replace(/\.xlsx$/, only ? '_바뀐반.xlsx' : '.xlsx')); });
   }
 
   function saveBlob(buf, name) {
@@ -1542,30 +1569,118 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
   }
 
-  function saveAtt(data) {
+  /**
+   * 출석부 저장. base: 고치기 시작한 차수(처음 마감은 0) — 그사이 다른 점검자가 먼저 저장했으면 서버가 막습니다.
+   * changed: 마감 후 바꾼 반(key) → 그 반만 출력
+   */
+  function saveAtt(data, base, changed) {
     setBusy(true);
-    return api('attSave', { date: S.date, data: data }).then(function (res) {
-      return downloadExcel(data, res.version).then(function () { return downloadContacts(data, res.version); }).then(function () {
+    if (changed) data.changed = changed;
+    return api('attSave', { date: S.date, data: data, baseVersion: base }).then(function (res) {
+      return downloadExcel(data, res.version, changed).then(function () { return downloadContacts(data, res.version, changed); }).then(function () {
         try { localStorage.removeItem(draftKey()); } catch (e) { /* 무시 */ }
-        toast(res.version + '차 출석부를 저장하고 ' + Roster.fileName(S.date, res.version) + ', ' + Roster.contactFileName(S.date, res.version) + ' 을 내려받았습니다.');
+        toast(res.version + '차로 저장하고 ' + (changed ? '바뀐 반 ' + changed.length + '개만' : '출석부·연락처 명렬표를') + ' 내려받았습니다.', 4000);
         S.att = null;
         return load(S.date);
       });
-    }).catch(function (er) { toast('저장하지 못했습니다: ' + er.message); }).then(function () { setBusy(false); });
+    }).catch(function (er) {
+      if (er.code === 'CONFLICT') { toast(er.message, 6000); S.att = null; return load(S.date); }
+      toast('저장하지 못했습니다: ' + er.message);
+    }).then(function () { setBusy(false); });
+  }
+
+  /* ───────── 최종 마감 후 변동 사항 (사용자 승인으로만 바꿈) ───────── */
+
+  function ackKey() { return 'att-ack:' + S.date; }
+  function attAcks() { try { return JSON.parse(localStorage.getItem(ackKey()) || '{}'); } catch (e) { return {}; } }
+  function attAck(no) { var a = attAcks(); a[no] = 1; try { localStorage.setItem(ackKey(), JSON.stringify(a)); } catch (e) { /* 무시 */ } }
+  function gOfKey(k) { return String(k || '').split('#')[0]; }
+
+  /**
+   * 마감한 출석부와 지금 명단 비교 (신청일련번호 기준)
+   * out: 출석부 학생 중 예약취소·승인 아님·명단에서 사라짐 / add: 승인인데 출석부 어디에도 없음
+   */
+  function attChanges(data) {
+    var ack = attAcks(), inRoster = {}, out = [], add = [];
+    (data.blocks || []).forEach(function (b, bi) {
+      (b.students || []).forEach(function (st, j) {
+        if (st.no) inRoster[st.no] = true;
+        if (st.status === '취소' || !st.no || ack[st.no]) return;
+        var r = rowByNo(st.no);
+        var kind = !r ? 'gone' : (r.cancelled || Core.str(r.cells[12]) === '예약취소' ? 'cancel' : (Core.str(r.cells[12]) !== '승인' ? 'unapproved' : ''));
+        if (kind) out.push({ kind: kind, bi: bi, j: j, st: st, row: r });
+      });
+    });
+    (S.data.rows || []).forEach(function (r) {
+      if (r.cancelled || Core.str(r.cells[12]) !== '승인' || inRoster[r.no] || ack[r.no]) return;
+      add.push({ row: r, group: groupOfRow(r) });
+    });
+    add.sort(function (a, b) { return (a.row.appliedAt || a.row.no) < (b.row.appliedAt || b.row.no) ? -1 : 1; });
+    return { out: out, add: add, count: out.length + add.length };
+  }
+
+  function studentFromRow(r) {
+    var it = Core.interpret(r.cells, Core.buildSchoolIndex(S.data.schools || []));
+    return { no: r.no, name: it.name || Core.str(r.cells[9]), school: Roster.officialSchool(it.school || it.home || r.cells[10], S.data.schools || []).name,
+      ban: Roster.normalizeBan(it.grade || r.cells[11]).ban, status: '' };
+  }
+
+  function changesCard(A) {
+    var ch = attChanges(A.data), blocks = A.data.blocks || [];
+    if (!ch.count) return '<section class="card pad small" style="border-color:#86EFAC">✔ 마감한 뒤 바뀐 신청이 없습니다. 새 명단이 올라오면 여기에서 알려 드립니다.</section>';
+    var KIND = { cancel: '예약취소', unapproved: '승인 아님', gone: '명단에서 사라짐' };
+    var live = function (b) { return (b.students || []).filter(function (x) { return x.status !== '취소'; }).length; };
+    var html = '<section class="card pad" style="display:flex;flex-direction:column;gap:10px;border:2px solid #F59E0B"><div class="row between"><b style="font-size:17px">⚠ 변동 사항 ' + ch.count + '건</b>' +
+      '<span class="muted small">자동으로 바꾸지 않습니다. 하나씩 확인하고 버튼을 눌러 주세요. 바꾼 뒤 [변경 저장]을 누르면 <b>바뀐 반만</b> 내려받습니다.</span></div>';
+    var used = {};
+    ch.out.forEach(function (o) {
+      var b = blocks[o.bi], g = gOfKey(b.key);
+      var cands = ch.add.filter(function (a) { return a.group === g && !used[a.row.no]; });
+      var r = o.row;
+      html += '<div class="chg"><div><span class="badge red">' + KIND[o.kind] + '</span> <b>' + esc(o.st.name) + '</b> <span class="muted small">' + esc(o.st.school) + ' ' + esc(o.st.ban) + ' · ' + esc(b.name || b.title) +
+        (r && r.cancelAt ? ' · ' + esc(shortTs(r.cancelAt)) + ' 취소' : '') + '</span></div><div class="row" style="gap:6px">' +
+        (cands.length ? '<select id="rep-' + o.bi + '-' + o.j + '" aria-label="교체할 학생">' + cands.map(function (a) {
+          return '<option value="' + esc(a.row.no) + '">' + esc(a.row.cells[9]) + ' · ' + esc(a.row.cells[10]) + ' ' + esc(a.row.cells[11]) + (a.row.level === 'red' ? ' ⚠' + esc(issueText(a.row)) : '') + '</option>';
+        }).join('') + '</select><button class="btn sm primary" data-x="chg-replace" data-i="' + o.bi + '" data-j="' + o.j + '">교체</button>' : '<span class="muted small">같은 수업에 새 학생 없음</span>') +
+        '<button class="btn sm" data-x="chg-remove" data-i="' + o.bi + '" data-j="' + o.j + '">출석부에서 빼기</button>' +
+        '<button class="btn sm" data-x="chg-keep" data-no="' + esc(o.st.no) + '" title="출석부를 그대로 두고 이 알림만 지웁니다 (강사가 결석 처리)">그대로 두기</button></div></div>';
+    });
+    ch.add.forEach(function (a) {
+      var targets = blocks.map(function (b, bi) { return { b: b, bi: bi }; }).filter(function (x) { return gOfKey(x.b.key) === a.group && live(x.b) < Roster.CAP; });
+      var r = a.row;
+      html += '<div class="chg"><div><span class="badge new">새로 승인</span> <b>' + esc(r.cells[9]) + '</b> <span class="muted small">' + esc(r.cells[10]) + ' ' + esc(r.cells[11]) + ' · ' + esc(a.group) +
+        (r.appliedAt ? ' · ' + esc(shortTs(r.appliedAt)) + ' 신청' : '') + '</span>' + (r.level ? ' <span class="badge ' + (r.level === 'red' ? 'red' : 'amber') + '">' + esc(issueText(r)) + '</span>' : '') + '</div><div class="row" style="gap:6px">' +
+        (targets.length ? '<select id="add-' + esc(r.no) + '" aria-label="추가할 반">' + targets.map(function (x) { return '<option value="' + x.bi + '">' + esc(x.b.name || x.b.title) + ' (' + live(x.b) + '명)</option>'; }).join('') + '</select>' +
+          '<button class="btn sm primary" data-x="chg-add" data-no="' + esc(r.no) + '">이 반에 추가</button>' : '<span class="muted small">' + (blocks.some(function (b) { return gOfKey(b.key) === a.group; }) ? '빈자리가 있는 반 없음 (16명)' : '출석부에 없는 반') + '</span>') +
+        '<button class="btn sm" data-x="chg-keep" data-no="' + esc(r.no) + '">나중에</button></div></div>';
+    });
+    return html + '</section>';
+  }
+
+  function issueText(r) { return (r.issues || []).map(function (x) { return x.label; }).join(', '); }
+
+  /** 빼거나 교체한 학생: 기한 뒤 취소면 결석 기록(기한 후 취소) */
+  function lateAbsenceFor(st, b) {
+    var r = st.no ? rowByNo(st.no) : null;
+    if (!r || !r.cancelAt || r.cancelAt < cancelDeadline() || absOf(st.no)) return false;
+    saveAbs(absForStudent(st, b), true);
+    return true;
   }
 
   function viewAttSaved(saved) {
     if (!S.att || S.att.mode !== 'edit' || S.att.version !== saved.version) {
-      S.att = { mode: 'edit', date: S.date, version: saved.version, data: JSON.parse(JSON.stringify(saved.data)), dirty: false };
+      S.att = { mode: 'edit', date: S.date, version: saved.version, data: JSON.parse(JSON.stringify(saved.data)), dirty: false, changed: {} };
       (S.att.data.blocks || []).forEach(function (b) { b.students = Roster.byName(b.students); });
     }
     var A = S.att, blocks = A.data.blocks || [];
-    var html = stepsBar(5, true) + '<section class="card pad row between" style="border-color:#86EFAC"><div><b style="font-size:17px">✔ ' + saved.version + '차 확정 · ' + esc(String(saved.at).slice(5, 16)) + ' · ' + esc(saved.by) + '</b>' +
-      '<div class="muted small">확정 후에는 분반을 다시 하지 않습니다. 취소한 학생은 출석부에서 빠지고 결석 기록으로 넘어갑니다. 바꾼 내용은 [변경 저장]을 눌러야 다음 차수로 저장됩니다.</div></div>' +
-      '<div class="row"><button class="btn" data-x="att-redl">출석부 다시 내려받기 (' + esc(Roster.fileName(S.date, saved.version)) + ')</button>' +
-      '<button class="btn" data-x="att-contacts" title="출석부와 같은 반·같은 순서에 학부모 이름·연락처를 넣고, 반마다 추가대기 학생(최신 명단 기준)을 붙인 명렬표">연락처 명렬표 내려받기 (' + esc(Roster.contactFileName(S.date, saved.version)) + ')</button>' +
-      '<button class="btn primary" data-x="att-save2"' + (A.dirty ? '' : ' disabled') + '>변경 저장 · ' + esc(Roster.fileName(S.date, saved.version + 1)) + '</button>' +
-      '<button class="btn" data-x="att-rebuild">처음부터 다시 만들기</button></div></section>' +
+    var nChanged = Object.keys(A.changed || {}).length;
+    var html = stepsBar(5, true) + '<section class="card pad row between" style="border-color:#86EFAC"><div><b style="font-size:17px">✔ 최종 마감 · ' + saved.version + '차 · ' + esc(String(saved.at).slice(5, 16)) + ' · ' + esc(saved.by) + '</b>' +
+      '<div class="muted small">마감한 출석부는 자동으로 바뀌지 않습니다. 아래 「변동 사항」을 확인해 승인하고 [변경 저장]을 누르면 다음 차수로 저장되고 <b>바뀐 반만</b> 내려받습니다.</div></div>' +
+      '<div class="row"><button class="btn primary" data-x="att-save2"' + (A.dirty ? '' : ' disabled') + '>변경 저장 · ' + (saved.version + 1) + '차' + (nChanged ? ' (바뀐 반 ' + nChanged + '개 출력)' : '') + '</button>' +
+      '<button class="btn" data-x="att-redl">출석부 전체 다시 받기 (' + saved.version + '차)</button>' +
+      (saved.data.changed && saved.data.changed.length ? '<button class="btn" data-x="att-redl-changed">' + saved.version + '차 바뀐 반만 다시 받기</button>' : '') +
+      '<button class="btn" data-x="att-contacts" title="출석부와 같은 반·같은 순서에 학부모 이름·연락처를 넣고, 반마다 추가대기 학생(최신 명단 기준)을 붙인 명렬표">연락처 명렬표 (전체)</button>' +
+      '<button class="btn" data-x="att-rebuild">처음부터 다시 만들기</button></div></section>' + changesCard(A) +
       '<section class="card pad att-help"><div class="ah"><span class="abs-chk on" style="pointer-events:none"><input type="checkbox" checked tabindex="-1" aria-hidden="true">결석</span>' +
       '<div><b>수업에 오지 않은 학생</b> (당일 결석)<br><span class="small">· 출석부에는 <b>그대로 남습니다</b> (엑셀 바뀌지 않음)<br>· 결석 메뉴에 「당일 무단결석」으로 바로 기록 → 다음 수업 신청 제한<br>· 체크를 풀면 기록도 지워집니다</span></div></div>' +
       '<div class="ah"><span class="btn sm" style="pointer-events:none">취소 처리</span>' +
@@ -1584,10 +1699,11 @@
         if (s && c === 10) {
           var ab = absForAtt(s);
           return '<label class="abs-chk' + (ab ? ' on' : '') + '"><input type="checkbox" data-xc="att-absent" data-i="' + i + '" data-j="' + idx(s) + '"' + (ab ? ' checked' : '') + '>결석</label>' +
-            (s.added ? '<span class="badge new">추가</span>' : '') + '<button class="btn sm" data-x="att-cancel" data-i="' + i + '" data-j="' + idx(s) + '">취소 처리</button>';
+            (s.replaced ? '<span class="badge new" title="' + esc(s.replaced) + ' 대신">' + esc(s.ver || '') + '차 교체</span>' : (s.added ? '<span class="badge new">' + (s.ver ? esc(s.ver) + '차 ' : '') + '추가</span>' : '')) +
+            '<button class="btn sm" data-x="att-cancel" data-i="' + i + '" data-j="' + idx(s) + '">취소 처리</button>';
         }
       } });
-      html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><b>' + (i + 1) + '번째 반</b>' +
+      html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px' + (A.changed && A.changed[b.key] ? ';border:2px solid var(--blue)' : '') + '"><div class="row between"><b>' + (i + 1) + '번째 반' + (A.changed && A.changed[b.key] ? ' <span class="badge new">바뀜 · 다음 차수에 출력</span>' : '') + '</b>' +
         '<span style="font-weight:700;color:' + (live > Roster.CAP ? 'var(--red)' : 'inherit') + '">' + live + '명' + (live > Roster.CAP ? ' ⚠ 16명 초과' : '') + '</span></div>' +
         '<div class="tbox">' + sheet + '</div>' +
         (cut.length ? '<div class="small" style="display:flex;flex-direction:column;gap:6px"><b>취소자 (엑셀에서 빠짐)</b>' + cut.map(function (s) {
@@ -1623,8 +1739,9 @@
       }
       if (st) {
         st.status = ''; st.added = true;
+        st.ver = A.version + 1;
         A.data.blocks[i].students = Roster.byName(A.data.blocks[i].students.concat([st]));
-        A.dirty = true;
+        A.dirty = true; A.changed[A.data.blocks[i].key] = true;
         close(); render();
       }
     });
@@ -1688,19 +1805,54 @@
     else if (x === 'att-save') {
       var sp = splitProblems(), ck = blockChecks();
       if (sp.length || ck.errors.length) { toast('반 설정이나 분반에 고칠 곳이 있습니다.'); return; }
-      saveAtt(draftData());
+      if (!confirm('최종 마감할까요?\n\n인쇄해서 게시할 출석부입니다. 마감 후에는 새 명단이 와도 자동으로 바뀌지 않고, 「변동 사항」을 확인·승인해야 바뀝니다.')) return;
+      saveAtt(draftData(), S.data.att ? S.data.att.version : 0);
+    }
+    else if (x === 'att-preview') {
+      var pv = draftData();
+      downloadExcel(pv, 1, null, Roster.fileName(S.date, 1).replace(/\.xlsx$/, '_미리보기.xlsx')).then(function () { toast('미리보기 엑셀을 내려받았습니다. 아직 마감(저장)하지 않았습니다.', 3000); });
     }
     else if (x === 'att-redl') downloadExcel(S.data.att.data, S.data.att.version);
+    else if (x === 'att-redl-changed') downloadExcel(S.data.att.data, S.data.att.version, S.data.att.data.changed);
     else if (x === 'att-contacts') downloadContacts(S.data.att.data, S.data.att.version).then(function () { toast('연락처 명렬표를 내려받았습니다. 추가대기는 지금 올라와 있는 최신 명단 기준입니다.'); });
-    else if (x === 'att-save2') saveAtt(A.data);
-    else if (x === 'att-rebuild') { if (confirm('저장된 출석부와 상관없이 처음부터 다시 분반합니다. 저장하기 전까지 기존 출석부는 그대로입니다. 계속할까요?')) buildDraft(); }
+    else if (x === 'att-save2') {
+      var keys = Object.keys(A.changed || {});
+      var data2 = JSON.parse(JSON.stringify(A.data));
+      saveAtt(data2, A.version, keys.length ? keys : null);
+    }
+    else if (x === 'att-rebuild') { if (confirm('이미 최종 마감(인쇄)한 출석부입니다. 처음부터 다시 분반하면 반·번호가 인쇄본과 달라질 수 있습니다.\n다시 마감하기 전까지 기존 출석부는 그대로입니다. 계속할까요?')) buildDraft(); }
+    else if (x === 'chg-replace' || x === 'chg-remove') {
+      var cb = A.data.blocks[i], cs = cb.students[j];
+      var nst = null;
+      if (x === 'chg-replace') {
+        var sel = document.getElementById('rep-' + i + '-' + j), nr = sel && rowByNo(sel.value);
+        if (!nr) return;
+        nst = studentFromRow(nr); nst.added = true; nst.replaced = cs.name; nst.ver = A.version + 1;
+      }
+      cs.status = '취소'; cs.cut = x === 'chg-replace' ? '교체' : '빼기';
+      if (nst) cb.students = Roster.byName(cb.students.concat([nst]));
+      A.dirty = true; A.changed[cb.key] = true;
+      var late = lateAbsenceFor(cs, cb);
+      render();
+      toast((nst ? cs.name + ' → ' + nst.name + ' 교체했습니다.' : cs.name + ' 학생을 출석부에서 뺐습니다.') + (late ? ' 기한 뒤 취소라 결석 기록(기한 후 취소)에도 넣었습니다.' : '') + ' [변경 저장]을 눌러야 저장됩니다.', 4000);
+    }
+    else if (x === 'chg-add') {
+      var no = t.getAttribute('data-no'), ar = rowByNo(no), asel = document.getElementById('add-' + no);
+      if (!ar || !asel) return;
+      var ab2 = A.data.blocks[+asel.value], ns = studentFromRow(ar);
+      ns.added = true; ns.ver = A.version + 1;
+      ab2.students = Roster.byName(ab2.students.concat([ns]));
+      A.dirty = true; A.changed[ab2.key] = true; render();
+      toast(ns.name + ' 학생을 ' + (ab2.name || '반') + '에 추가했습니다. [변경 저장]을 눌러야 저장됩니다.', 3000);
+    }
+    else if (x === 'chg-keep') { attAck(t.getAttribute('data-no')); render(); }
     else if (x === 'att-cancel') {
       var b = A.data.blocks[i], st = b.students[j];
-      st.status = '취소'; A.dirty = true; render();
+      st.status = '취소'; A.dirty = true; A.changed[b.key] = true; render();
       saveAbs(absForStudent(st, b)).then(function () { toast(st.name + ' 학생을 취소자로 표시하고 결석 기록에 넣었습니다.'); });
     } else if (x === 'att-uncancel') {
       var b2 = A.data.blocks[i], st2 = b2.students[j];
-      st2.status = ''; A.dirty = true; render();
+      st2.status = ''; A.dirty = true; A.changed[b2.key] = true; render();
       var rec = (S.data.absences || []).filter(function (a) { return a.src === '출석부 취소 처리' && ((st2.no && a.no === st2.no) || (!st2.no && a.name === st2.name)); })[0];
       if (rec) deleteAbs(rec);
     } else if (x === 'att-addstu') attAddStudent(i);
@@ -1763,7 +1915,9 @@
       updatePreview(i);
       saveDraftBlocks();
     } else if (x === 'att-ef') {
-      A.data.blocks[+el.getAttribute('data-i')][el.getAttribute('data-f')] = el.value;
+      var eb = A.data.blocks[+el.getAttribute('data-i')];
+      eb[el.getAttribute('data-f')] = el.value;
+      A.changed[eb.key] = true;
       if (!A.dirty) { A.dirty = true; var bt = document.querySelector('[data-x=att-save2]'); if (bt) bt.disabled = false; }
     }
   }
@@ -1806,7 +1960,7 @@
     else if (act === 'folder') changeFolder();
     else if (act === 'guide') showGuide();
     else if (act === 'cms') openCms();
-    else if (act === 'refresh') { S.settings = null; checkVersion(); load(S.date).then(function () { toast('최신 내용으로 새로고침했습니다.', 2000); }); }
+    else if (act === 'refresh') { var rt = Date.now(); S.settings = null; checkVersion(); load(S.date).then(function () { if (!(S.toastAt >= rt)) toast('최신 내용으로 새로고침했습니다.', 2000); }); }
     else if (act === 'update') { location.replace(location.pathname + '?v=' + Date.now()); }
     else if (act === 'close-result') { S.lastUpload = null; render(); }
     else if (act === 'links') showLinks();

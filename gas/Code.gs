@@ -463,7 +463,12 @@ API.attSave = function (req, user) {
     var json = JSON.stringify(req.data);
     if (json.length > 48000) throw apiError_('BAD', '출석부 내용이 너무 큽니다.');
     var prev = readAtt_().filter(function (a) { return a.date === req.date; });
-    var version = prev.length ? prev[prev.length - 1].version + 1 : 1;
+    var last = prev.length ? prev[prev.length - 1] : null;
+    // 고치기 시작한 차수(baseVersion) 뒤에 다른 점검자가 먼저 저장했으면 덮어쓰지 않습니다
+    if (req.baseVersion !== undefined && req.baseVersion !== null && (last ? last.version : 0) !== +req.baseVersion) {
+      throw apiError_('CONFLICT', last ? last.by + ' 선생님이 ' + String(last.at).slice(5, 16) + '에 ' + last.version + '차를 먼저 저장했습니다. 새로 불러온 출석부에서 다시 확인해 주세요.' : '출석부가 바뀌었습니다. 새로 불러와 주세요.');
+    }
+    var version = last ? last.version + 1 : 1;
     var at = now_();
     appendRows_(SHEET.ATT, [[req.date, String(version), at, user.name, json]]);
     bumpRev_();

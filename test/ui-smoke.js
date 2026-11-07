@@ -196,6 +196,41 @@ const server = http.createServer((req, res) => {
     console.log('명렬표:', aoa.length + '줄, 추가대기 구역 있음, 첫 반 학생 ' + flat.slice(3).findIndex((t) => !/^\d+\|/.test(t)) + '명');
   }
   await page.waitForSelector('[data-x=att-cancel]');
+  // 최종 마감 뒤 새 명단: 학생00 예약취소 + 새 승인 학생 → 자동으로 바뀌지 않고 「변동 사항」으로 알림
+  {
+    const big2 = big.map((r) => r.slice());
+    big2[0][12] = '예약취소';
+    big2.push(['260100', BT, '새보호자', '010-0000-3000', '', '개인', '', '', '', '새학생', '가온초', '2-1', '승인', 'idnew']);
+    const up2 = env.call('upload', { date: '2026-11-07', files: [parseXls(toXls(big2), '통합예약신청자목록 - 2026-11-05T090000.000.xls')] });
+    if (up2.results[0].result !== '반영') throw new Error('새 명단 업로드: ' + JSON.stringify(up2.results));
+  }
+  await page.click('[data-act=refresh]');
+  await page.waitForSelector('text=변동 사항 2건');
+  const stillThere = await page.$$eval('.xls td', (tds) => tds.some((td) => td.textContent === '학생00'));
+  if (!stillThere) throw new Error('마감한 출석부가 자동으로 바뀜');
+  await page.screenshot({ path: path.join(OUT, '8a-changes.png'), fullPage: false });
+  await page.click('[data-x=chg-replace]');
+  await page.waitForSelector('text=변동 사항');
+  const dlsB = [];
+  const onDlB = (d) => dlsB.push(d);
+  page.on('download', onDlB);
+  await page.click('[data-x=att-save2]');
+  for (let k = 0; k < 40 && dlsB.length < 2; k++) await page.waitForTimeout(250);
+  page.off('download', onDlB);
+  if (dlsB.length < 2) throw new Error('바뀐 반 출력이 안 됨');
+  await dlsB[0].saveAs(path.join(OUT, 'att-changed.xlsx'));
+  {
+    const X = require(process.env.XLSX_PATH || 'xlsx');
+    const ws = X.readFile(path.join(OUT, 'att-changed.xlsx')).Sheets;
+    const aoa = X.utils.sheet_to_json(ws[Object.keys(ws)[0]], { header: 1, defval: '' });
+    const names = aoa.map((r) => r[3]);
+    if (aoa.length > 28 || !names.includes('새학생') || names.includes('학생00')) throw new Error('바뀐 반만 출력 확인 실패: ' + aoa.length + '줄');
+    console.log('마감 후 변동: 알림 → 교체 승인 → 바뀐 반만 출력(' + aoa.length + '줄) 확인');
+  }
+  // 늦게 저장하는 쪽은 막힘 (다른 점검자가 먼저 다음 차수 저장)
+  const conflict = env.call('attSave', { date: '2026-11-07', data: { blocks: [] }, baseVersion: 1 });
+  if (conflict.code !== 'CONFLICT') throw new Error('차수 충돌을 막지 않음');
+  await page.waitForSelector('[data-x=att-cancel]');
   await page.click('[data-x=att-cancel][data-i="0"]');
   const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-save2]')]);
   await dl2.saveAs(path.join(OUT, 'att2.xlsx'));
@@ -218,6 +253,16 @@ const server = http.createServer((req, res) => {
   const kept = [await page.inputValue('[data-xi=att-b][data-i="0"][data-f=tool1]'), await page.$eval('[data-xc=att-b][data-i="0"][data-f=room1]', (e) => e.value), await page.inputValue('[data-xi=att-b][data-i="0"][data-f=name]')];
   if (kept.join('|') !== '스케치북|라온실|기초코딩 오전1반') throw new Error('반 설정이 남아 있지 않음: ' + kept.join('|'));
   console.log('다시 만들 때 반 설정 유지:', kept.join(' / '));
+  // 마감 전(작업 중)에는 새 명단이 오면 자동으로 다시 분반
+  {
+    const big3 = big.map((r) => r.slice());
+    big3.push(['260101', BT, '또보호자', '010-0000-3001', '', '개인', '', '', '', '또학생', '해솔초', '3-1', '승인', 'idnew2']);
+    env.call('upload', { date: '2026-11-07', files: [parseXls(toXls(big3), '통합예약신청자목록 - 2026-11-06T090000.000.xls')] });
+    await page.click('[data-act=refresh]');
+    await page.waitForFunction(() => /분반을 다시 했습니다/.test(document.getElementById('toast').textContent));
+    if ((await page.inputValue('[data-xi=att-b][data-i="0"][data-f=tool1]')) !== '스케치북') throw new Error('자동 재분반 때 반 설정이 사라짐');
+    console.log('마감 전 자동 재분반 확인 (반 설정 유지)');
+  }
   console.log('내려받은 파일:', rawDl.suggestedFilename(), dl.suggestedFilename(), dl2.suggestedFilename());
   await page.click('[data-view=settings]');
   await page.waitForSelector('text=수업일');
