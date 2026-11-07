@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '20';
+  var APP_VERSION = '21';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -237,6 +237,57 @@
       await sendFiles(picked, stat);
     } catch (e) { toast(e.message); }
     setBusy(false);
+  }
+
+  /*
+   * 통합예약 관리자 화면의 즐겨찾기 버튼(통합예약 엑셀 일괄 받기)이 보내는 명단을 바로 받습니다.
+   * - 관리자 사이트(cms.use.go.kr)에서 온 메시지만 받습니다.
+   * - 엑셀 원본 그대로 받아 [명단 올리기]와 똑같은 경로로 올립니다 (파일로 저장하지 않음).
+   * 주고받는 신호: xd-hello → wc-ready / xd-files → wc-received → (사용자 확인) → wc-done 또는 wc-cancel
+   */
+  var CMS_ORIGIN = CFG.CMS_ORIGIN || 'https://cms.use.go.kr';
+  var cmsBusy = false;
+  function cmsReply(src, msg) { try { src.postMessage(msg, CMS_ORIGIN); } catch (e) { /* 창이 닫힘 */ } }
+  window.addEventListener('message', function (e) {
+    if (e.origin !== CMS_ORIGIN || !e.source || !e.data || typeof e.data !== 'object') return;
+    var d = e.data;
+    if (d.type === 'xd-hello') {
+      // 로그인하고 명단을 다 불러온 뒤에만 준비됐다고 답합니다 (관리자 화면은 1초마다 다시 물어봅니다)
+      if (S.token && S.data && !S.busy && !cmsBusy) cmsReply(e.source, { type: 'wc-ready', app: APP_VERSION, date: S.date });
+    } else if (d.type === 'xd-files' && !cmsBusy) receiveCms(e.source, d);
+  });
+
+  function receiveCms(src, d) {
+    var list = Array.isArray(d.files) ? d.files.slice(0, 40) : [];
+    var files = [];
+    list.forEach(function (f) {
+      if (!f || typeof f.name !== 'string' || !(f.bytes instanceof ArrayBuffer) || !f.bytes.byteLength || f.bytes.byteLength > 5e6) return;
+      var at = +f.at || Date.now();
+      files.push({ file: new File([f.bytes], f.name.slice(0, 120), { lastModified: at }), title: String(f.title || '').slice(0, 200) });
+    });
+    cmsReply(src, { type: 'wc-received', count: files.length });
+    if (!files.length) { cmsReply(src, { type: 'wc-done', ok: false, message: '받은 명단 파일이 없습니다.' }); return; }
+    cmsBusy = true;
+    try { window.focus(); } catch (e) { /* 무시 */ }
+    var round = (S.data.dates || []).filter(function (x) { return x.date === S.date; })[0];
+    var html = '<span class="badge new" style="align-self:flex-start">통합예약 관리자 화면에서 받음</span>' +
+      '<h2 style="margin:0">명단 ' + files.length + '개가 왔습니다</h2>' +
+      '<p style="margin:0">올릴 회차: <b>' + (round ? esc(round.n) + '회차 · ' : '') + esc(md(S.date)) + '</b> <span class="muted small">(다른 회차라면 [취소] 후 회차를 바꾸고 다시 보내 주세요)</span></p>' +
+      '<div class="small" style="max-height:240px;overflow:auto;line-height:1.8">' + files.map(function (f) { return '· ' + esc(f.title || f.file.name); }).join('<br>') + '</div>' +
+      '<p class="muted small" style="margin:0">[명단 올리기]와 똑같이 처리합니다. 접수 기간 밖이거나 이미 올라간 것보다 오래된 명단은 건너뜁니다.</p>' +
+      '<div class="row" style="justify-content:flex-end"><button class="btn" data-m="no">취소</button><button class="btn primary" data-m="yes">올리기</button></div>';
+    modal(html, function (m, b, w, close) {
+      close();
+      if (m !== 'yes') { cmsBusy = false; cmsReply(src, { type: 'wc-cancel' }); return; }
+      S.view = 'home'; render(); window.scrollTo(0, 0);
+      uploadFromFiles(files.map(function (f) { return f.file; })).then(function () {
+        var u = S.lastUpload || { results: [] };
+        cmsReply(src, { type: 'wc-done', ok: true, results: (u.results || []).map(function (r) { return { result: r.result, title: r.cls || r.title || r.file, detail: r.detail || '' }; }),
+          skipped: (u.stat && u.stat.outside) || 0, date: S.date });
+      }).catch(function (er) {
+        cmsReply(src, { type: 'wc-done', ok: false, message: er.message });
+      }).then(function () { cmsBusy = false; });
+    });
   }
 
   async function parseFile(file) {

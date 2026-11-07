@@ -1,0 +1,144 @@
+/*
+ * 통합예약 관리자 화면(가짜) → 즐겨찾기 버튼(downloader.js) → [점검 웹앱으로 보내기] → 점검 웹앱이 받아 올리기
+ * 실행: node test/cms-send.js [스크린샷 폴더]   (downloader.js 위치: DOWNLOADER_JS, 기본 ../excel-down/downloader.js)
+ */
+'use strict';
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const { chromium } = require('playwright');
+const { createEnv } = require('./harness');
+const { files, toXls } = require('./fake-data');
+
+const OUT = process.argv[2] || path.join(__dirname, 'shots-cms');
+fs.mkdirSync(OUT, { recursive: true });
+const DL = process.env.DOWNLOADER_JS || path.join(__dirname, '..', '..', 'excel-down', 'downloader.js');
+if (!fs.existsSync(DL)) { console.log('downloader.js 없음 — 건너뜀: ' + DL); process.exit(0); }
+
+const env = createEnv({ now: new Date('2026-11-04T10:00:00+09:00') });
+env.ctx.setupSheets();
+env.ctx.writeTable_('설정_학교', [['가온초등학교', '초'], ['해솔초등학교', '초'], ['새솔초등학교', '초'], ['다솜초등학교', '초'], ['누리중학교', '중']]);
+env.ctx.writeTable_('점검자', [['owner@example.com', '이승주']]);
+
+// 브라우저 날짜를 11/6(금)으로 고정: 11/7 수업이 접수 기간 안
+const NOW = new Date('2026-11-06T15:00:00+09:00');
+
+// 가짜 관리자 목록 화면: 11/7 수업 3개(접수중·접수마감) + 다음 주 수업 1개(체크 안 됨)
+const CLASSES = [
+  { sn: '4790', title: files.basic.rows[0][1].trim(), date: '2026-11-07 ~ 2026-11-07', status: '접수중', rows: files.basic.rows },
+  { sn: '4791', title: files.explore.rows[0][1].trim(), date: '2026-11-07 ~ 2026-11-07', status: '접수마감', rows: files.explore.rows },
+  { sn: '4792', title: files.master.rows[0][1].trim(), date: '2026-11-07 ~ 2026-12-05', status: '접수중', rows: files.master.rows },
+  { sn: '4793', title: '[초2~3학년]11월14일 주말SW교실 기초코딩 오전반', date: '2026-11-14 ~ 2026-11-14', status: '접수중', rows: [] }
+];
+const listPage = '<!doctype html><meta charset="utf-8"><title>통합예약</title><table><thead><tr><th>순번</th><th>누리집명</th><th>예약구분</th><th>신청명</th><th>운영일시</th><th>신청현황</th><th>접수상태</th><th>콘텐츠관리</th><th>휴일관리</th><th>신청관리</th></tr></thead><tbody>' +
+  CLASSES.map((c, i) => `<tr><td>${i + 1}</td><td>울산창의융합교육센터</td><td>교육</td><td><a href="#">${c.title}</a></td><td>${c.date}<br>09:20 ~ 12:20</td><td>${c.rows.length}명</td><td>${c.status}</td><td></td><td></td><td><button onclick="opViewApplyList('${c.sn}', '1010', '34')">신청 관리</button></td></tr>`).join('') +
+  '</tbody></table>';
+
+const WEB = path.join(__dirname, '..', 'docs');
+const server = http.createServer((req, res) => {
+  let p = decodeURIComponent(req.url.split('?')[0]);
+  if (p === '/') p = '/index.html';
+  if (p === '/config.js') { res.end("window.APP_CONFIG={API_URL:'https://api.test/exec',CLIENT_ID:'test-client',CMS_ORIGIN:'https://cms.test'};"); return; }
+  const f = path.join(WEB, p);
+  if (!f.startsWith(WEB) || !fs.existsSync(f)) { res.statusCode = 404; res.end(); return; }
+  res.setHeader('Content-Type', p.endsWith('.js') ? 'text/javascript' : p.endsWith('.css') ? 'text/css' : 'text/html');
+  res.end(fs.readFileSync(f));
+});
+
+(async () => {
+  await new Promise((r) => server.listen(0, r));
+  const APP = 'http://localhost:' + server.address().port + '/';
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const errors = [];
+  const payload = Buffer.from(JSON.stringify({ email: 'owner@example.com', name: '이승주', exp: Math.floor(Date.now() / 1000) + 3000 })).toString('base64url');
+  await ctx.addInitScript(({ tok, now }) => {
+    // 시계 고정
+    const RealDate = Date; const off = now - RealDate.now();
+    // eslint-disable-next-line no-global-assign
+    Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [RealDate.now() + off])); } static now() { return RealDate.now() + off; } };
+    if (location.hostname === 'localhost') { sessionStorage.setItem('idtoken', tok); localStorage.setItem('guide-v1', '1'); }
+  }, { tok: 'x.' + payload + '.y', now: NOW.getTime() });
+  await ctx.route('https://accounts.google.com/**', (r) => r.fulfill({ body: 'window.google={accounts:{id:{initialize(){},renderButton(){},prompt(){}}}};', contentType: 'text/javascript' }));
+  await ctx.route('https://api.test/**', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    delete body.token;
+    const out = env.call(body.action, body);
+    await route.fulfill({ body: JSON.stringify(out), contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' } });
+  });
+  let excelCalls = 0;
+  await ctx.route('https://cms.test/**', async (route) => {
+    const u = new URL(route.request().url());
+    if (u.pathname.endsWith('BD_selectReservationMngList.do')) return route.fulfill({ body: listPage, contentType: 'text/html; charset=utf-8' });
+    if (u.pathname.endsWith('ND_excelDownload.do')) {
+      excelCalls++;
+      const q = new URLSearchParams(route.request().postData());
+      const c = CLASSES.find((x) => x.sn === q.get('q_rsvtRegSn'));
+      if (!c || q.get('excelKey') !== 'reservationNoContsCceAplyList') return route.fulfill({ status: 200, body: '<html><body>로그인이 필요합니다</body></html>', contentType: 'text/html' });
+      return route.fulfill({ body: toXls(c.rows), contentType: 'application/vnd.ms-excel',
+        headers: { 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent('통합예약신청자목록.xls') } });
+    }
+    return route.fulfill({ status: 404, body: '' });
+  });
+
+  const cms = await ctx.newPage();
+  cms.on('pageerror', (e) => errors.push('관리자: ' + e.message));
+  await cms.goto('https://cms.test/intra/reservation/BD_selectReservationMngList.do');
+  // 즐겨찾기 버튼 누르기 = downloader.js 실행
+  await cms.evaluate((u) => { window.__excelDownWebapp = u; }, APP);
+  await cms.addScriptTag({ content: fs.readFileSync(DL, 'utf8') });
+  await cms.waitForSelector('#excelDownPanel');
+  const checked = await cms.$$eval('#excelDownPanel .xd-chk', (cs) => cs.map((c) => c.checked));
+  if (checked.join() !== 'true,true,true,false') throw new Error('기본 체크가 다름: ' + checked);
+  const sendLabel = await cms.textContent('#excelDownPanel .xd-primary');
+  if (!/3개 점검 웹앱으로 보내기/.test(sendLabel)) throw new Error('보내기 버튼: ' + sendLabel);
+  await cms.screenshot({ path: path.join(OUT, '1-panel.png') });
+
+  const [app] = await Promise.all([ctx.waitForEvent('page'), cms.click('#excelDownPanel .xd-primary')]);
+  app.on('pageerror', (e) => errors.push('웹앱: ' + e.message));
+  // 웹앱이 받으면 확인창
+  await app.waitForSelector('[data-m=yes]', { timeout: 30000 });
+  const modalText = await app.textContent('.modal');
+  if (!/명단 3개가 왔습니다/.test(modalText) || !/11월 7일/.test(modalText)) throw new Error('확인창: ' + modalText);
+  await app.screenshot({ path: path.join(OUT, '2-app-confirm.png') });
+  const midText = await cms.textContent('#excelDownPanel .xd-result');
+  if (!/3개를 점검 웹앱으로 보냈습니다/.test(midText)) throw new Error('보낸 뒤 패널: ' + midText);
+  await app.click('[data-m=yes]');
+  await app.waitForSelector('.result-line', { timeout: 20000 });
+  const lines = await app.$$eval('.result-line', (ls) => ls.map((l) => l.textContent));
+  console.log('웹앱 올리기 결과:', lines.join(' / '));
+  if (lines.filter((l) => /반영/.test(l)).length !== 3) throw new Error('3개 반영이 아님');
+  await app.screenshot({ path: path.join(OUT, '3-app-result.png') });
+  // 관리자 화면 패널에 결과가 돌아옴
+  await cms.waitForFunction(() => /점검 웹앱에 올렸습니다/.test((document.querySelector('#excelDownPanel .xd-result') || {}).textContent || ''), null, { timeout: 15000 });
+  const final = await cms.textContent('#excelDownPanel .xd-result');
+  console.log('패널 결과:', final.replace(/\s+/g, ' ').slice(0, 160));
+  await cms.screenshot({ path: path.join(OUT, '4-panel-done.png') });
+  const up = env.ctx.readTable_('업로드기록').rows;
+  if (up.length !== 3) throw new Error('업로드 기록 수: ' + up.length);
+  if (excelCalls !== 3) throw new Error('엑셀 요청 수: ' + excelCalls);
+
+  // 다른 곳에서 온 메시지는 무시
+  const ignored = await app.evaluate(() => new Promise((resolve) => {
+    let got = false;
+    window.addEventListener('message', (e) => { if (e.data && e.data.type === 'xd-files') got = true; });
+    window.postMessage({ type: 'xd-files', files: [{ name: '통합예약신청자목록.xls', at: Date.now(), bytes: new ArrayBuffer(10) }] }, '*');
+    setTimeout(() => resolve(got && !document.querySelector('.modal-bg')), 500);
+  }));
+  if (!ignored) throw new Error('다른 출처의 메시지를 받아들임');
+
+  // 취소하면 패널에 취소로 표시
+  await cms.click('#excelDownPanel .xd-primary'); // 닫기
+  await cms.addScriptTag({ content: fs.readFileSync(DL, 'utf8') });
+  await cms.waitForSelector('#excelDownPanel');
+  await cms.click('#excelDownPanel .xd-primary');
+  await app.waitForSelector('[data-m=no]', { timeout: 30000 });
+  await app.click('[data-m=no]');
+  await cms.waitForFunction(() => /취소했습니다/.test((document.querySelector('#excelDownPanel .xd-result') || {}).textContent || ''), null, { timeout: 15000 });
+  console.log('취소 흐름 확인');
+
+  console.log('페이지 오류:', errors.length ? errors.join(' | ') : '없음');
+  if (errors.length) process.exitCode = 1;
+  await browser.close();
+  server.close();
+})().catch((e) => { console.error(e); process.exit(1); });

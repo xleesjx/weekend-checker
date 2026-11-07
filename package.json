@@ -5,6 +5,7 @@
   "scripts": {
     "build": "node -e \"require('fs').copyFileSync('docs/core.js','gas/Core.gs')\"",
     "test": "npm run build && node test/run.js && node test/roster.test.js",
+    "test:cms": "node test/cms-send.js",
     "fake": "node test/fake-data.js"
   }
 }
