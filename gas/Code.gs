@@ -410,16 +410,14 @@ API.absSave = function (req, user) {
     if (i < 0 && rec.no) rows.forEach(function (r, k) { if (r[1] === rec.date && r[2] === rec.no) { i = k; row[0] = id = r[0]; } });
     if (i >= 0) rows[i] = row; else rows.push(row);
     writeTable_(SHEET.ABS, rows);
-    bumpRev_();
-    return { id: id };
+    return { id: id, rev: bumpRev_() };
   });
 };
 
 API.absDelete = function (req) {
   return withLock_(function () {
     writeTable_(SHEET.ABS, readTable_(SHEET.ABS).rows.filter(function (r) { return r[0] !== req.id; }));
-    bumpRev_();
-    return {};
+    return { rev: bumpRev_() };
   });
 };
 

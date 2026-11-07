@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '18';
+  var APP_VERSION = '19';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -151,7 +151,7 @@
   }
 
   function poll() {
-    if (S.busy || !S.token || document.visibilityState !== 'visible' || document.querySelector('.modal-bg')) return;
+    if (S.busy || S.absPending || !S.token || document.visibilityState !== 'visible' || document.querySelector('.modal-bg')) return;
     // 메모를 쓰는 중이면 화면을 다시 그리지 않습니다
     var typing = Array.prototype.some.call(document.querySelectorAll('input.memo'), function (m) { return m.value || m === document.activeElement; });
     var ae = document.activeElement;
@@ -801,10 +801,57 @@
 
   var REASONS = ['기한 후 취소', '당일 무단결석', '질병', '대회·행사', '연락 두절'];
 
+  /*
+   * 결석 기록은 화면에 바로 반영하고, 구글 시트 저장은 뒤에서 차례대로 보냅니다 (누를 때마다 기다리지 않도록).
+   * 새 기록은 임시 번호(tmp…)로 먼저 보이고, 저장이 끝나면 진짜 번호로 바뀝니다.
+   */
+  var absQ = Promise.resolve();
+  S.absPending = 0;
+  function absIndicator() {
+    var el = document.getElementById('abs-sync');
+    if (el) el.textContent = S.absPending ? '구글 시트에 저장 중… (' + S.absPending + ')' : '모두 저장됨 ✔';
+    if (el) el.className = 'small ' + (S.absPending ? 'sync-on' : 'sync-ok');
+  }
+  function absQueue(job) {
+    S.absPending++; absIndicator();
+    absQ = absQ.then(job).then(function (res) {
+      if (res && res.rev && S.absPending === 1) S.rev = res.rev;  // 내가 바꾼 것 때문에 전체를 다시 불러오지 않도록
+    }).catch(function (er) {
+      toast('결석 기록을 구글 시트에 저장하지 못했습니다: ' + er.message + ' — 화면을 새로 불러옵니다.', 5000);
+      S.absPending = 1; return load(S.date);
+    }).then(function () { S.absPending = Math.max(0, S.absPending - 1); absIndicator(); });
+    return absQ;
+  }
+  function absList() { S.data.absences = S.data.absences || []; return S.data.absences; }
+
+  /** rec 저장 (새 기록이면 추가). 화면은 바로 다시 그립니다. */
   function saveAbs(rec) {
-    setBusy(true);
-    return api('absSave', { rec: rec }).then(function (r) { return load(S.date).then(function () { return r; }); })
-      .catch(function (er) { toast(er.message); }).then(function (r) { setBusy(false); return r; });
+    var list = absList();
+    var cur = rec.id ? absById(rec.id) : (rec.no ? list.filter(function (a) { return a.date === rec.date && a.no === rec.no; })[0] : null);
+    if (cur) Object.assign(cur, rec);
+    else { cur = Object.assign({ id: 'tmp' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), by: (S.user && S.user.name) || '', at: '' }, rec); list.push(cur); }
+    cur.at = cur.at || nowText();
+    render();
+    absQueue(function () {
+      var send = Object.assign({}, cur);
+      if (/^tmp/.test(send.id)) delete send.id;
+      if (cur.deleted) return null;
+      return api('absSave', { rec: send }).then(function (res) { cur.id = res.id; return res; });
+    });
+    return Promise.resolve(cur);
+  }
+
+  function deleteAbs(a) {
+    if (!a) return;
+    a.deleted = true;
+    S.data.absences = absList().filter(function (x) { return x !== a; });
+    render();
+    absQueue(function () { return /^tmp/.test(a.id) ? null : api('absDelete', { id: a.id }); });
+  }
+
+  function nowText() {
+    var d = new Date(Date.now() + 9 * 3600000);
+    return d.toISOString().slice(0, 16).replace('T', ' ');
   }
 
   function absOf(no) { return (S.data.absences || []).filter(function (a) { return a.no === no; })[0]; }
@@ -815,36 +862,68 @@
     if (!r) return;
     var a = absOf(no);
     if (a) {
-      if (!confirm(r.cells[9] + ' 학생의 결석 표시를 해제할까요? 사유와 메모도 함께 지워집니다.')) return;
-      setBusy(true);
-      api('absDelete', { id: a.id }).then(function () { return load(S.date); }).catch(function (er) { toast(er.message); }).then(function () { setBusy(false); });
+      if (a.memo && !confirm(r.cells[9] + ' 학생의 결석 표시를 해제할까요? 적어 둔 메모도 함께 지워집니다.')) return;
+      deleteAbs(a);
       return;
     }
     saveAbs({ date: S.date, no: r.no, name: r.cells[9], school: r.cells[10], ban: r.cells[11], cls: r.cls, phone: r.cells[3],
       src: r.cancelled ? '예약취소' : '당일 결석', reason: r.cancelled ? '기한 후 취소' : '당일 무단결석' })
-      .then(function () { toast(r.cells[9] + ' 학생을 결석으로 표시했습니다. 사유는 결석 메뉴에서 고칠 수 있습니다.', 3000); });
+      .then(function () { toast(r.cells[9] + ' 학생을 결석으로 표시했습니다. 사유는 결석 메뉴에서 고칠 수 있습니다.', 2500); });
   }
 
+  var ABS_SORTS = [['cls', '반·이름'], ['name', '이름'], ['reason', '사유'], ['at', '등록 순']];
+
   function viewAbs() {
-    var recs = S.data.absences || [];
+    var recs = (S.data.absences || []).slice();
     var limited = recs.filter(function (a) { return !a.excused; }).length;
     var next = Core.nextClassDate(S.data.dates || [], S.date);
-    var html = '<section class="card pad row between"><div class="row">' + roundSelect() + '</div><span class="muted small">결석·취소 ' + recs.length + '건 · 다음 수업일' + (next ? '(' + Core.shortDate(next) + ')' : '') + ' 신청 제한 <b>' + limited + '</b>명 · 출석 인정 ' + (recs.length - limited) + '명</span></section>' +
-      '<section class="card pad small" style="line-height:1.9;background:#F8FAFF;border-color:#BFD0F5"><b style="font-size:15px">결석자 처리 방법</b><br>' +
-      '① <b>전체 명단</b>에서 빠른 필터 <b>예약취소</b>를 누르고, 기한 후 취소한 학생 줄의 <b>[결석]</b>을 누릅니다.<br>' +
-      '② 수업 당일 결석한 학생도 <b>전체 명단</b>에서 그 학생 줄의 <b>[결석]</b>을 누릅니다. (출석부에서 [취소 처리]한 학생은 자동으로 들어옵니다)<br>' +
-      '③ 여기서 <b>사유</b>를 고르고 연락한 내용을 <b>메모</b>합니다. 질병·대회 등으로 봐 줄 경우 <b>출석 인정</b>에 체크하면 다음 회차 신청 제한이 풀립니다.<br>' +
-      '<span class="muted">출석 인정이 아닌 학생은 다음 수업일 점검에서 「신청 제한 학생」으로 표시됩니다.</span></section>';
-    html += '<section class="card" style="overflow:hidden">' + (recs.length ? recs.map(function (a) {
-      return '<div class="abs-card' + (a.excused ? ' ex' : '') + '"><div class="row"><b style="font-size:16px">' + esc(a.name) + '</b><span>' + esc(a.school) + ' · ' + esc(a.ban) + ' · ' + esc(a.cls) + '</span>' +
-        '<span class="badge done">' + esc(a.src || '당일 결석') + '</span>' + (a.phone ? '<a href="tel:' + esc(String(a.phone).replace(/[^0-9]/g, '')) + '" style="margin-left:auto">' + esc(a.phone) + '</a>' : '') + '</div>' +
-        '<div class="row" style="gap:6px">' + REASONS.map(function (rs) { return '<button class="chipbtn' + (a.reason === rs ? ' on' : '') + '" data-x="abs-reason" data-id="' + esc(a.id) + '" data-v="' + esc(rs) + '">' + esc(rs) + '</button>'; }).join('') + '</div>' +
-        '<div class="row small"><label class="row" style="gap:6px">취소 시각 <input type="text" value="' + esc(a.cancelAt) + '" placeholder="예: 11/6 18:20" data-xc="abs-field" data-id="' + esc(a.id) + '" data-f="cancelAt" style="width:140px"></label>' +
-        '<label class="row" style="gap:6px;margin-left:auto;font-weight:700;min-height:36px"><input type="checkbox" data-xc="abs-ex" data-id="' + esc(a.id) + '"' + (a.excused ? ' checked' : '') + ' style="width:18px;height:18px">출석 인정 (신청 제한 안 함)</label></div>' +
-        '<div class="row"><input type="text" value="' + esc(a.memo) + '" placeholder="메모 (예: 오후 2시 통화, 독감)" data-xc="abs-field" data-id="' + esc(a.id) + '" data-f="memo" style="flex:1"><button class="btn sm" data-x="abs-del" data-id="' + esc(a.id) + '">기록 삭제</button></div>' +
-        '<span class="muted small">' + esc(a.by) + ' · ' + esc(String(a.at).slice(5, 16)) + '</span></div>';
-    }).join('') : '<div class="pad muted">이 수업일의 결석·취소 기록이 없습니다.</div>') + '</section>';
+    var key = S.absSort || 'cls';
+    var ko = function (a, b) { return String(a || '').localeCompare(String(b || ''), 'ko'); };
+    recs.sort(function (a, b) {
+      if (key === 'name') return ko(a.name, b.name) || ko(a.school, b.school);
+      if (key === 'reason') return ko(a.reason, b.reason) || ko(a.name, b.name);
+      if (key === 'at') return ko(a.at, b.at);
+      return ko(a.cls, b.cls) || ko(a.name, b.name);
+    });
+    var html = '<section class="card pad row between"><div class="row">' + roundSelect() + '</div><span class="muted small">결석·취소 <b>' + recs.length + '</b>명 · 다음 수업일' + (next ? '(' + Core.shortDate(next) + ')' : '') + ' 신청 제한 <b>' + limited + '</b>명 · 출석 인정 ' + (recs.length - limited) + '명 · <span id="abs-sync"></span></span></section>' +
+      '<section class="card pad small" style="line-height:1.8;background:#F8FAFF;border-color:#BFD0F5"><b>결석자 처리 방법</b> ' + tip('출석 인정이 아닌 학생은 다음 수업일 점검에서 「신청 제한 학생」으로 표시됩니다.') + '<br>' +
+      '· 수업 당일 결석: <b>출석부</b> 화면에서 학생 옆 <b>[결석]</b> 체크 (또는 전체 명단의 [결석])<br>' +
+      '· 기한 후 취소로 출석부에 없는 학생: 아래 칸에 <b>학생명·학교·학년반</b>만 적고 [등록] → 사유는 자동으로 「기한 후 취소」<br>' +
+      '· 사유·메모를 고치고, 질병·대회 등으로 봐 줄 학생은 <b>출석 인정</b>에 체크하면 신청 제한이 풀립니다.</section>' +
+      '<section class="card pad row" style="gap:8px;flex-wrap:wrap"><b>기한 후 취소 학생 등록</b>' +
+      '<input type="text" id="an" placeholder="학생명" style="width:110px" aria-label="학생명"><input type="text" id="as" placeholder="학교 (예: 가온초)" style="width:150px" aria-label="학교">' +
+      '<input type="text" id="ab" placeholder="학년반 (예: 3-2)" style="width:120px" aria-label="학년반"><button class="btn primary" data-x="abs-add">등록</button></section>';
+    html += '<section class="card" style="overflow:hidden"><div class="pad row" style="gap:6px;padding-bottom:0"><span class="muted small">정렬</span>' +
+      ABS_SORTS.map(function (x) { return '<button class="chipbtn' + (key === x[0] ? ' on' : '') + '" data-x="abs-sort" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>' +
+      (recs.length ? '<div class="tbox"><table class="grid abs-tbl"><thead><tr><th>학생명</th><th>학교</th><th>학년반</th><th>반</th><th>사유</th><th>출석 인정</th><th>메모</th><th>연락처</th><th>구분</th><th></th></tr></thead><tbody>' +
+        recs.map(function (a) {
+          var reasons = REASONS.indexOf(a.reason) < 0 && a.reason ? REASONS.concat([a.reason]) : REASONS;
+          return '<tr class="' + (a.excused ? 'ex' : '') + '"><td><b>' + esc(a.name) + '</b></td><td>' + esc(a.school) + '</td><td>' + esc(a.ban) + '</td><td>' + esc(a.cls) + '</td>' +
+            '<td><select data-xc="abs-reason2" data-id="' + esc(a.id) + '" aria-label="사유">' + reasons.map(function (rs) { return '<option' + (a.reason === rs ? ' selected' : '') + '>' + esc(rs) + '</option>'; }).join('') + '</select></td>' +
+            '<td style="text-align:center"><input type="checkbox" data-xc="abs-ex" data-id="' + esc(a.id) + '"' + (a.excused ? ' checked' : '') + ' aria-label="출석 인정" style="width:20px;height:20px"></td>' +
+            '<td><input type="text" value="' + esc(a.memo) + '" placeholder="메모" data-xc="abs-field" data-id="' + esc(a.id) + '" data-f="memo" aria-label="메모" style="min-width:160px;width:100%"></td>' +
+            '<td>' + (a.phone ? '<a href="tel:' + esc(String(a.phone).replace(/[^0-9]/g, '')) + '">' + esc(a.phone) + '</a>' : '') + '</td>' +
+            '<td class="muted small">' + esc(a.src || '') + '</td><td><button class="btn sm" data-x="abs-del" data-id="' + esc(a.id) + '" title="기록 삭제" aria-label="기록 삭제">✕</button></td></tr>';
+        }).join('') + '</tbody></table></div>' : '<div class="pad muted">이 수업일의 결석·취소 기록이 없습니다.</div>') + '</section>';
+    setTimeout(absIndicator, 0);
     return html;
+  }
+
+  /** 결석 메뉴에서 직접 등록 (학생명·학교·학년반) → 기한 후 취소 */
+  function absAddManual() {
+    var n = (document.getElementById('an').value || '').trim();
+    var sc = (document.getElementById('as').value || '').trim();
+    var bn = (document.getElementById('ab').value || '').trim();
+    if (!n || !sc || !bn) { toast('학생명·학교·학년반을 모두 적어 주세요.'); return; }
+    var schools = S.data.schools || [];
+    var off = Core.officialSchool(sc, schools);
+    // 이번 회차 명단에 같은 학생이 있으면 신청번호·반·연락처를 이어 붙입니다
+    var r = (S.data.rows || []).filter(function (x) { return Core.str(x.cells[9]) === n && Core.schoolKey(x.cells[10]) === Core.schoolKey(sc); })[0];
+    if (r && absOf(r.no)) { toast(n + ' 학생은 이미 결석 기록에 있습니다.'); return; }
+    if (!r && (S.data.absences || []).some(function (a) { return a.name === n && Core.schoolKey(a.school) === Core.schoolKey(sc); })) { toast(n + ' 학생은 이미 결석 기록에 있습니다.'); return; }
+    saveAbs({ date: S.date, no: r ? r.no : '', name: n, school: off.ok ? off.name : sc, ban: Core.normalizeBan(bn).ban, cls: r ? r.cls : '', phone: r ? r.cells[3] : '',
+      src: '수기 입력', reason: '기한 후 취소' });
+    toast(n + ' 학생을 「기한 후 취소」로 등록했습니다.' + (r ? '' : ' (이번 회차 명단에서 찾지 못해 반·연락처는 비어 있습니다)'), 3000);
   }
 
   function absById(id) { return (S.data.absences || []).filter(function (a) { return a.id === id; })[0]; }
@@ -1216,8 +1295,12 @@
       var sheet = Roster.sheetHtml({ title: b.title, line: b.line, tag: b.tag, students: liveList }, { cell: function (t, c, v, s) {
         if (t === 0 && c === 0) return '<input type="text" class="cellin big" value="' + esc(b.title) + '" data-xi="att-ef" data-i="' + i + '" data-f="title" aria-label="제목">';
         if (t === 2 && c === 0) return '<input type="text" class="cellin" value="' + esc(b.line) + '" data-xi="att-ef" data-i="' + i + '" data-f="line" aria-label="교실·교구">';
-        if (t === 4 && c === 10) return '<span class="xk-h">학생 취소</span>';
-        if (s && c === 10) return (s.added ? '<span class="badge new">추가</span>' : '') + '<button class="btn sm" data-x="att-cancel" data-i="' + i + '" data-j="' + idx(s) + '">취소 처리</button>';
+        if (t === 4 && c === 10) return '<span class="xk-h">당일 결석 · 학생 취소</span>';
+        if (s && c === 10) {
+          var ab = absForAtt(s);
+          return '<label class="abs-chk' + (ab ? ' on' : '') + '"><input type="checkbox" data-xc="att-absent" data-i="' + i + '" data-j="' + idx(s) + '"' + (ab ? ' checked' : '') + '>결석</label>' +
+            (s.added ? '<span class="badge new">추가</span>' : '') + '<button class="btn sm" data-x="att-cancel" data-i="' + i + '" data-j="' + idx(s) + '">취소 처리</button>';
+        }
       } });
       html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><b>' + (i + 1) + '번째 반</b>' +
         '<span style="font-weight:700;color:' + (live > Roster.CAP ? 'var(--red)' : 'inherit') + '">' + live + '명' + (live > Roster.CAP ? ' ⚠ 16명 초과' : '') + '</span></div>' +
@@ -1262,6 +1345,11 @@
     });
   }
 
+  /** 출석부 학생의 이 수업일 결석 기록 */
+  function absForAtt(s) {
+    return (S.data.absences || []).filter(function (a) { return a.date === S.date && ((s.no && a.no === s.no) || (!s.no && !a.no && a.name === s.name)); })[0];
+  }
+
   function absForStudent(s, b) {
     var r = s.no ? rowByNo(s.no) : null;
     return { date: S.date, no: s.no, name: s.name, school: s.school, ban: s.ban, cls: b.tag, phone: r ? r.cells[3] : '', src: '출석부 취소 처리', reason: '기한 후 취소' };
@@ -1277,9 +1365,11 @@
     else if (x === 'sel-link') linkDialog();
     else if (x === 'abs-reason') absPatch(t.getAttribute('data-id'), { reason: t.getAttribute('data-v') });
     else if (x === 'abs-del') {
-      if (!confirm('이 결석 기록을 삭제할까요?')) return;
-      api('absDelete', { id: t.getAttribute('data-id') }).then(function () { return load(S.date); }).catch(function (er) { toast(er.message); });
+      var da = absById(t.getAttribute('data-id'));
+      if (da && confirm(da.name + ' 학생의 결석 기록을 삭제할까요?')) deleteAbs(da);
     }
+    else if (x === 'abs-add') absAddManual();
+    else if (x === 'abs-sort') { S.absSort = t.getAttribute('data-v'); render(); }
     else if (x === 'att-start') buildDraft();
     else if (x === 'att-gohome') { S.view = 'home'; render(); window.scrollTo(0, 0); }
     else if (x === 'att-next') attNext();
@@ -1309,12 +1399,23 @@
       var b2 = A.data.blocks[i], st2 = b2.students[j];
       st2.status = ''; A.dirty = true; render();
       var rec = (S.data.absences || []).filter(function (a) { return a.src === '출석부 취소 처리' && ((st2.no && a.no === st2.no) || (!st2.no && a.name === st2.name)); })[0];
-      if (rec) api('absDelete', { id: rec.id }).then(function () { return load(S.date); });
+      if (rec) deleteAbs(rec);
     } else if (x === 'att-addstu') attAddStudent(i);
   }
 
   function extraChange(el) {
     var x = el.getAttribute('data-xc'), A = S.att;
+    if (x === 'att-absent') {
+      var ab = A.data.blocks[+el.getAttribute('data-i')], sa = ab.students[+el.getAttribute('data-j')];
+      var ex = absForAtt(sa);
+      if (el.checked && !ex) saveAbs(Object.assign(absForStudent(sa, ab), { src: '출석부 결석 체크', reason: '당일 무단결석' }));
+      else if (!el.checked && ex) {
+        if (ex.memo && !confirm(sa.name + ' 학생의 결석 체크를 해제할까요? 적어 둔 메모도 지워집니다.')) { el.checked = true; return; }
+        deleteAbs(ex);
+      }
+      return;
+    }
+    if (x === 'abs-reason2') { absPatch(el.getAttribute('data-id'), { reason: el.value }); return; }
     if (x === 'abs-ex') absPatch(el.getAttribute('data-id'), { excused: el.checked });
     else if (x === 'abs-field') { var p = {}; p[el.getAttribute('data-f')] = el.value; absPatch(el.getAttribute('data-id'), p); }
     else if (x === 'att-keep') { if (el.checked) A.acceptKeep[el.getAttribute('data-id')] = true; else delete A.acceptKeep[el.getAttribute('data-id')]; computeParts(); render(); }

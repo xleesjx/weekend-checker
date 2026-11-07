@@ -193,3 +193,13 @@ tr.cut td { text-decoration: line-through; color: #94A3B8; }
 .ld-bar { width: min(320px, 80vw); height: 8px; background: #E5E7EB; border-radius: 99px; overflow: hidden; }
 .ld-bar span { display: block; height: 100%; width: 3%; background: linear-gradient(90deg, #60A5FA, #2563EB); border-radius: 99px; transition: width 0.25s linear; }
 @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+
+/* 결석 목록 한 줄 */
+.abs-tbl td { padding: 4px 8px; vertical-align: middle; white-space: nowrap; }
+.abs-tbl select { min-height: 34px; }
+.abs-tbl tr.ex td { background: #F0FDF4; }
+.sync-on { color: #B45309; font-weight: 700; }
+.sync-ok { color: #15803D; }
+.abs-chk { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; font-size: 13px; padding: 3px 8px; border: 1px solid #CBD5E1; border-radius: 6px; margin-right: 6px; cursor: pointer; background: #fff; }
+.abs-chk input { width: 18px; height: 18px; margin: 0; }
+.abs-chk.on { background: #FEE2E2; border-color: #DC2626; color: #B91C1C; }
