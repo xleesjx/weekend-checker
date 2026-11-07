@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '23';
+  var APP_VERSION = '24';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -988,9 +988,10 @@
     var html = '<section class="card pad row between"><div class="row">' + roundSelect() + '</div><span class="muted small">결석·취소 <b>' + recs.length + '</b>명 · 다음 수업일' + (next ? '(' + Core.shortDate(next) + ')' : '') + ' 신청 제한 <b>' + limited + '</b>명 · 출석 인정 ' + (recs.length - limited) + '명 · <span id="abs-sync"></span></span></section>' +
       '<section class="card pad small" style="line-height:1.8;background:#F8FAFF;border-color:#BFD0F5"><b>결석자 처리 방법</b> ' + tip('출석 인정이 아닌 학생은 다음 수업일 점검에서 「신청 제한 학생」으로 표시됩니다.') + '<br>' +
       '· 수업 당일 결석: <b>출석부</b> 화면에서 학생 옆 <b>[결석]</b> 체크 (또는 전체 명단의 [결석])<br>' +
-      '· 기한 후 취소로 출석부에 없는 학생: 아래 칸에 <b>학생명·학교·학년반</b>만 적고 [등록] → 사유는 자동으로 「기한 후 취소」<br>' +
+      '· 기한 후 취소: 아래 <b>자동 후보</b>(기준 시각 이후에 예약취소한 학생)에서 [등록] · 후보에 없는 학생은 <b>직접 등록</b> 칸에 학생명·학교·학년반만 적고 [모두 등록]<br>' +
       '· 사유·메모를 고치고, 질병·대회 등으로 봐 줄 학생은 <b>출석 인정</b>에 체크하면 신청 제한이 풀립니다.</section>' +
-      '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><b>기한 후 취소 학생 등록</b><span class="muted small">여러 명을 적은 뒤 한 번에 등록합니다 · 빈 줄은 건너뜁니다</span></div>' +
+      lateCancelCard() +
+      '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><b>기한 후 취소 학생 직접 등록</b><span class="muted small">여러 명을 적은 뒤 한 번에 등록합니다 · 빈 줄은 건너뜁니다</span></div>' +
       '<div id="abs-new">' + absNewRow() + absNewRow() + absNewRow() + '</div>' +
       '<div class="row"><button class="btn" data-x="abs-addrow">＋ 줄 추가</button><button class="btn primary" data-x="abs-add">모두 등록</button></div></section>';
     html += '<section class="card" style="overflow:hidden"><div class="pad row" style="gap:6px;padding-bottom:0"><span class="muted small">정렬</span>' +
@@ -1013,6 +1014,70 @@
   function absNewRow() {
     return '<div class="row abs-new" style="gap:8px;flex-wrap:nowrap;margin-bottom:6px"><input type="text" class="an" placeholder="학생명" style="width:110px" aria-label="학생명">' +
       '<input type="text" class="as" placeholder="학교 (예: 가온초)" style="width:160px" aria-label="학교"><input type="text" class="ab" placeholder="학년반 (예: 3-2)" style="width:130px" aria-label="학년반"></div>';
+  }
+
+  /* ───────── 기한 후 취소 자동 후보 ───────── */
+
+  function cancelRule() { return (S.data && S.data.cancelRule) || { days: 1, time: '18:00', isDefault: true }; }
+  /** 기한 시각 'YYYY-MM-DD HH:MM' (수업일 days일 전 time) */
+  function cancelDeadline() { var r = cancelRule(); return Core.addDays(S.date, -r.days) + ' ' + r.time; }
+  function ruleText() {
+    var r = cancelRule();
+    return (r.days === 0 ? '수업 당일' : r.days === 1 ? '수업 전날' : '수업 ' + r.days + '일 전') + ' ' + r.time + ' 이후 취소';
+  }
+  function skipKey() { return 'late-skip:' + S.date; }
+  function lateSkips() { try { return JSON.parse(localStorage.getItem(skipKey()) || '{}'); } catch (e) { return {}; } }
+
+  /** 예약취소 중 기한 뒤에 취소했고 아직 결석 기록에 없는 신청 */
+  function lateCancels() {
+    var dl = cancelDeadline(), end = S.date + ' 23:59:59', skip = lateSkips();
+    var absNos = {};
+    (S.data.absences || []).forEach(function (a) { if (a.no) absNos[a.no] = true; });
+    return (S.data.rows || []).filter(function (r) {
+      return Core.str(r.cells[12]) === '예약취소' && r.cancelAt && r.cancelAt >= dl && r.cancelAt <= end && !absNos[r.no] && !skip[r.no];
+    }).sort(function (a, b) { return a.cancelAt < b.cancelAt ? -1 : 1; });
+  }
+
+  function lateCancelCard() {
+    var list = lateCancels();
+    var unknown = (S.data.rows || []).filter(function (r) { return Core.str(r.cells[12]) === '예약취소' && !r.cancelAt && !absOf(r.no); }).length;
+    var nSkip = Object.keys(lateSkips()).length;
+    var html = '<section class="card pad" style="display:flex;flex-direction:column;gap:8px;border:2px solid ' + (list.length ? '#F59E0B' : 'var(--line)') + '">' +
+      '<div class="row between"><div><b>기한 후 취소 자동 후보 ' + list.length + '명</b> <span class="muted small">기준: <b>' + esc(ruleText()) + '</b> (' + esc(shortTs(cancelDeadline())) + '부터)' +
+      (cancelRule().isDefault ? ' · 아직 기본값입니다' : '') + '</span></div><div class="row"><button class="btn sm" data-x="late-rule">기준 바꾸기</button>' +
+      (list.length > 1 ? '<button class="btn sm primary" data-x="late-all">모두 등록</button>' : '') + '</div></div>';
+    if (list.length) {
+      html += '<div class="tbox"><table class="grid"><thead><tr><th>반</th><th>학생명</th><th>학교</th><th>학년반</th><th>취소 시각</th><th></th></tr></thead><tbody>' + list.map(function (r) {
+        return '<tr><td>' + esc(absClass({ no: r.no, cls: r.cls }).label) + '</td><td><b>' + esc(r.cells[9]) + '</b></td><td>' + esc(r.cells[10]) + '</td><td>' + esc(r.cells[11]) + '</td>' +
+          '<td><b style="color:var(--red)">' + esc(shortTs(r.cancelAt)) + '</b></td>' +
+          '<td><button class="btn sm primary" data-x="late-add" data-no="' + esc(r.no) + '">등록</button> <button class="btn sm" data-x="late-skip" data-no="' + esc(r.no) + '" title="결석으로 보지 않음 (이 PC에서 목록에서 뺌)">제외</button></td></tr>';
+      }).join('') + '</tbody></table></div>';
+    } else html += '<span class="muted small">기준 시각 이후에 취소한 학생이 없거나 모두 처리했습니다.</span>';
+    if (unknown || nSkip) html += '<span class="muted small">' + (unknown ? '취소 시각을 모르는 예약취소 ' + unknown + '명은 후보에서 빠집니다 (즐겨찾기 버튼의 [점검 웹앱으로 보내기]로 올리면 시각이 들어옵니다). ' : '') +
+      (nSkip ? '제외한 학생 ' + nSkip + '명 <button class="btn sm" data-x="late-unskip">다시 보이기</button>' : '') + '</span>';
+    return html + '</section>';
+  }
+
+  function lateRecord(r) {
+    return { date: S.date, no: r.no, name: Core.str(r.cells[9]), school: Core.str(r.cells[10]), ban: Core.str(r.cells[11]), cls: r.cls, phone: Core.str(r.cells[3]),
+      cancelAt: shortTs(r.cancelAt), src: '기한 후 취소 (자동 후보)', reason: '기한 후 취소' };
+  }
+
+  function lateRuleDialog() {
+    var r = cancelRule();
+    modal('<h2 style="margin:0">기한 후 취소 기준</h2><p class="muted small" style="margin:0">이 시각 이후에 예약취소한 학생을 「기한 후 취소」 후보로 보여 줍니다. 점검자 모두에게 같은 기준이 적용됩니다.</p>' +
+      '<div class="row" style="gap:8px">수업일 <select id="ld">' + [0, 1, 2, 3, 4, 5, 6, 7].map(function (d) { return '<option value="' + d + '"' + (d === r.days ? ' selected' : '') + '>' + (d === 0 ? '당일' : d + '일 전') + '</option>'; }).join('') +
+      '</select><input type="time" id="lt" value="' + esc(r.time) + '" aria-label="시각"> 이후 취소</div>' +
+      '<div class="row" style="justify-content:flex-end"><button class="btn" data-m="no">닫기</button><button class="btn primary" data-m="ok">저장</button></div>', function (m, b, w, close) {
+      if (m === 'no') return close();
+      var days = +w.querySelector('#ld').value, time = w.querySelector('#lt').value;
+      if (!/^\d{2}:\d{2}$/.test(time)) { toast('시각을 골라 주세요.'); return; }
+      close(); setBusy(true);
+      api('cancelRule', { days: days, time: time }).then(function (res) {
+        S.data.cancelRule = res.rule; if (res.rev) S.rev = res.rev; render(); toast('기준을 「' + ruleText() + '」로 바꿨습니다.');
+      }).catch(function (er) { toast(/알 수 없는|unknown|BAD_ACTION/i.test(er.message) ? 'Apps Script(Code.gs)를 새 버전으로 바꿔야 기준을 저장할 수 있습니다.' : er.message, 5000); })
+        .then(function () { setBusy(false); });
+    });
   }
 
   /** 결석 기록의 취소 시각 (기록에 없으면 이번 명단에서) */
@@ -1500,6 +1565,11 @@
       if (da && confirm(da.name + ' 학생의 결석 기록을 삭제할까요?')) deleteAbs(da);
     }
     else if (x === 'abs-add') absAddManual();
+    else if (x === 'late-rule') lateRuleDialog();
+    else if (x === 'late-add') { var lr = rowByNo(t.getAttribute('data-no')); if (lr) { saveAbs(lateRecord(lr)); toast(Core.str(lr.cells[9]) + ' 학생을 「기한 후 취소」로 등록했습니다.', 2000); } }
+    else if (x === 'late-all') { var la = lateCancels(); la.forEach(function (r) { saveAbs(lateRecord(r), true); }); render(); toast(la.length + '명을 「기한 후 취소」로 등록했습니다.', 2500); }
+    else if (x === 'late-skip') { var sk = lateSkips(); sk[t.getAttribute('data-no')] = 1; try { localStorage.setItem(skipKey(), JSON.stringify(sk)); } catch (e) { /* 무시 */ } render(); }
+    else if (x === 'late-unskip') { try { localStorage.removeItem(skipKey()); } catch (e) { /* 무시 */ } render(); }
     else if (x === 'abs-addrow') { var box = document.getElementById('abs-new'); box.insertAdjacentHTML('beforeend', absNewRow()); box.lastElementChild.querySelector('.an').focus(); }
     else if (x === 'abs-sort') { S.absSort = t.getAttribute('data-v'); render(); }
     else if (x === 'att-start') buildDraft();

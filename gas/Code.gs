@@ -340,6 +340,7 @@ API.state = function (req, user) {
   out.uploadedFiles = uploads.map(function (u) { return u[2] + '|' + u[3]; });
   out.links = readLinks_();
   out.absences = readAbsences_().filter(function (a) { return a.date === date; });
+  out.cancelRule = cancelRule_();
   var att = readAtt_();
   out.att = att.filter(function (a) { return a.date === date; }).pop() || null;
   out.attPrev = att.filter(function (a) { return a.date < date; }).pop() || null;
@@ -414,6 +415,25 @@ API.absSave = function (req, user) {
     if (i >= 0) rows[i] = row; else rows.push(row);
     writeTable_(SHEET.ABS, rows);
     return { id: id, rev: bumpRev_() };
+  });
+};
+
+/** 기한 후 취소 기준: 수업일 days일 전 time 이후에 취소하면 「기한 후 취소」 후보 (점검자 모두 같은 기준) */
+function cancelRule_() {
+  try {
+    var r = JSON.parse(PropertiesService.getScriptProperties().getProperty('CANCEL_RULE') || 'null');
+    if (r && r.days >= 0 && /^\d{2}:\d{2}$/.test(r.time)) return { days: +r.days, time: r.time, by: r.by || '', at: r.at || '' };
+  } catch (e) { /* 기본값 */ }
+  return { days: 1, time: '18:00', by: '', at: '', isDefault: true };
+}
+
+API.cancelRule = function (req, user) {
+  var days = Math.floor(+req.days), time = Core.str(req.time);
+  if (!(days >= 0 && days <= 14) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw apiError_('BAD', '기준을 확인해 주세요 (0~14일 전, 00:00~23:59).');
+  return withLock_(function () {
+    var r = { days: days, time: time, by: user.name, at: now_() };
+    PropertiesService.getScriptProperties().setProperty('CANCEL_RULE', JSON.stringify(r));
+    return { rule: r, rev: bumpRev_() };
   });
 };
 

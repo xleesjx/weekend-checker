@@ -161,6 +161,27 @@ const server = http.createServer((req, res) => {
   const env2res = env.call('upload', { date: '2026-11-07', files: [require('./fake-data').parseXls(toXls(files.explore.rows), '통합예약신청자목록 - 2026-11-06T160000.000.xls')] });
   if (env2res.results[0].result !== '반영') throw new Error('다시 올리기: ' + JSON.stringify(env2res.results));
   if (!env.call('state', { date: '2026-11-07' }).rows.some((r) => r.cancelAt === CANCEL_AT && r.cells[12] === '예약취소')) throw new Error('화면 값 없이 다시 올렸더니 취소 시각이 사라짐');
+  // 기한 후 취소 자동 후보 (기본: 수업 전날 18:00 이후 → 11/6 19:16 취소 2명)
+  await app.click('[data-act=refresh]');
+  await app.waitForTimeout(800);
+  await app.click('[data-view=abs]');
+  await app.waitForSelector('text=기한 후 취소 자동 후보 2명');
+  await app.screenshot({ path: path.join(OUT, '6-late.png'), fullPage: true });
+  await app.click('[data-x=late-skip]');
+  await app.waitForSelector('text=기한 후 취소 자동 후보 1명');
+  await app.click('[data-x=late-unskip]');
+  await app.click('[data-x=late-all]');
+  await app.waitForSelector('text=기한 후 취소 자동 후보 0명');
+  await app.waitForFunction(() => /모두 저장됨/.test((document.getElementById('abs-sync') || {}).textContent || ''));
+  const absRows = env.ctx.readTable_('결석기록').rows;
+  if (absRows.length !== 2 || !absRows.every((r) => r[9] === '기한 후 취소' && r[10] === '11/6 19:16' && /자동 후보/.test(r[8]))) throw new Error('자동 후보 등록: ' + JSON.stringify(absRows.map((r) => [r[8], r[9], r[10]])));
+  // 기준 바꾸기: 수업 전날 20:00 → 19:16 취소는 후보 아님
+  await app.click('[data-x=late-rule]');
+  await app.fill('#lt', '20:00');
+  await app.click('[data-m=ok]');
+  await app.waitForSelector('text=수업 전날 20:00 이후 취소');
+  if (JSON.parse(env.props.CANCEL_RULE || '{}').time !== '20:00') throw new Error('기준 저장 안 됨');
+  console.log('기한 후 취소 자동 후보: 2명 표시·제외·모두 등록·기준 바꾸기 확인');
   await app.click('[data-view=home]');
 
   // 다른 곳에서 온 메시지는 무시
