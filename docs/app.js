@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '21';
+  var APP_VERSION = '22';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -246,6 +246,19 @@
    * 주고받는 신호: xd-hello → wc-ready / xd-files → wc-received → (사용자 확인) → wc-done 또는 wc-cancel
    */
   var CMS_ORIGIN = CFG.CMS_ORIGIN || 'https://cms.use.go.kr';
+  var CMS_LIST_URL = CMS_ORIGIN + '/intra/reservation/BD_selectReservationMngList.do';
+  // 창 이름: 관리자 화면의 즐겨찾기 버튼이 이 이름으로 이 창을 찾습니다 (새로 열거나 새로고침하지 않도록)
+  try { if (window.name !== 'weekendChecker') window.name = 'weekendChecker'; } catch (e) { /* 무시 */ }
+
+  /** [통합예약 관리자 ↗]: 열려 있는 관리자 창이 있으면 그 창으로, 없으면 새 창으로 (이렇게 열면 두 창이 연결됨) */
+  function openCms() {
+    var w = window.open('', 'cmsAdmin');
+    if (!w) { toast('크롬이 새 창을 막았습니다. 주소창 오른쪽의 팝업 차단 표시를 눌러 「항상 허용」을 골라 주세요.', 5000); return; }
+    var fresh = false;
+    try { fresh = w.location.href === 'about:blank'; } catch (e) { fresh = false; }  // 다른 사이트(관리자 화면)면 읽을 수 없음 = 이미 열린 창
+    if (fresh) w.location.href = CMS_LIST_URL;
+    try { w.focus(); } catch (e) { /* 무시 */ }
+  }
   var cmsBusy = false;
   function cmsReply(src, msg) { try { src.postMessage(msg, CMS_ORIGIN); } catch (e) { /* 창이 닫힘 */ } }
   window.addEventListener('message', function (e) {
@@ -400,6 +413,7 @@
         var n = v[0] === 'review' && (counts.red + counts.amber) ? ' (' + (counts.red + counts.amber) + ')' : '';
         return '<button data-view="' + v[0] + '" class="' + (S.view === v[0] ? 'on' : '') + '">' + v[1] + n + '</button>';
       }).join('') + '</nav><div class="top-right"><span class="muted small">' + (S.loadedAt ? S.loadedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 기준' : '') + '</span>' +
+      '<button class="btn sm" data-act="cms" title="통합예약 관리자 화면을 새 창으로 엽니다. 이미 열려 있으면 그 창으로 갑니다. 이렇게 연 창의 즐겨찾기 버튼은 이 웹앱 창으로 명단을 바로 보냅니다.">통합예약 관리자 ↗</button>' +
       '<button class="btn sm" data-act="refresh" title="서버에서 최신 명단·처리 상태·설정을 다시 불러옵니다">새로고침</button><button class="btn sm" data-act="guide">? 도움말</button>' +
       '<a href="' + esc(S.data.sheetUrl) + '" target="_blank" rel="noopener">구글 시트</a><span class="chip">' + esc((S.data.user && S.data.user.name) || '') + ' 선생님</span></div></div><div id="busy" class="' + (S.busy ? 'busy-bar' : '') + '"></div></header>';
     if (S.newVersion) html += '<div class="wrap"><div class="card pad row between" style="margin-top:12px;border-color:#BFD0F5;background:#F0F5FF"><span>웹앱 새 버전이 나왔습니다.</span><button class="btn sm primary" data-act="update">지금 적용</button></div></div>';
@@ -1602,6 +1616,7 @@
     if (act === 'upload') uploadFromFolder();
     else if (act === 'folder') changeFolder();
     else if (act === 'guide') showGuide();
+    else if (act === 'cms') openCms();
     else if (act === 'refresh') { S.settings = null; checkVersion(); load(S.date).then(function () { toast('최신 내용으로 새로고침했습니다.', 2000); }); }
     else if (act === 'update') { location.replace(location.pathname + '?v=' + Date.now()); }
     else if (act === 'close-result') { S.lastUpload = null; render(); }

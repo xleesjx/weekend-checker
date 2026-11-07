@@ -127,15 +127,72 @@ const server = http.createServer((req, res) => {
   }));
   if (!ignored) throw new Error('다른 출처의 메시지를 받아들임');
 
-  // 취소하면 패널에 취소로 표시
+  // 두 번째 보내기: 이미 열린 웹앱 창을 그대로 씀 (새 창·새로고침 없음) + 취소하면 패널에 취소로 표시
+  await app.evaluate(() => { window.__mark = 'kept'; });
+  let extra = 0;
+  const onPage = () => { extra++; };
+  ctx.on('page', onPage);
   await cms.click('#excelDownPanel .xd-primary'); // 닫기
   await cms.addScriptTag({ content: fs.readFileSync(DL, 'utf8') });
   await cms.waitForSelector('#excelDownPanel');
   await cms.click('#excelDownPanel .xd-primary');
   await app.waitForSelector('[data-m=no]', { timeout: 30000 });
+  if (extra || (await app.evaluate(() => window.__mark)) !== 'kept') throw new Error('두 번째 보내기에서 웹앱 창을 새로 열거나 새로고침함');
+  console.log('두 번째 보내기: 열린 웹앱 창 그대로 사용');
   await app.click('[data-m=no]');
   await cms.waitForFunction(() => /취소했습니다/.test((document.querySelector('#excelDownPanel .xd-result') || {}).textContent || ''), null, { timeout: 15000 });
   console.log('취소 흐름 확인');
+  // 관리자 창에서 다시 웹앱 버튼을 눌러도 새 관리자 창이 생기지 않음
+  await app.click('[data-act=cms]');
+  await app.waitForTimeout(500);
+  if (extra) throw new Error('웹앱의 [통합예약 관리자] 버튼이 열린 관리자 창 대신 새 창을 엶');
+  ctx.off('page', onPage);
+
+  /* 반대 순서: 웹앱을 먼저 열고 → [통합예약 관리자 ↗]로 관리자 화면 열기 → 그 창의 즐겨찾기 버튼이 먼저 연 웹앱 창으로 보냄 */
+  const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  await ctx2.addInitScript(({ tok, now }) => {
+    const RealDate = Date; const off = now - RealDate.now();
+    // eslint-disable-next-line no-global-assign
+    Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [RealDate.now() + off])); } static now() { return RealDate.now() + off; } };
+    if (location.hostname === 'localhost') { sessionStorage.setItem('idtoken', tok); localStorage.setItem('guide-v1', '1'); }
+  }, { tok: 'x.' + payload + '.y', now: NOW.getTime() });
+  await ctx2.route('https://accounts.google.com/**', (r) => r.fulfill({ body: 'window.google={accounts:{id:{initialize(){},renderButton(){},prompt(){}}}};', contentType: 'text/javascript' }));
+  await ctx2.route('https://api.test/**', async (route) => {
+    const body = JSON.parse(route.request().postData()); delete body.token;
+    await route.fulfill({ body: JSON.stringify(env.call(body.action, body)), contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' } });
+  });
+  await ctx2.route('https://cms.test/**', async (route) => {
+    const u = new URL(route.request().url());
+    if (u.pathname.endsWith('BD_selectReservationMngList.do')) return route.fulfill({ body: listPage, contentType: 'text/html; charset=utf-8' });
+    const q = new URLSearchParams(route.request().postData());
+    const c = CLASSES.find((x) => x.sn === q.get('q_rsvtRegSn'));
+    return route.fulfill({ body: toXls(c.rows), contentType: 'application/vnd.ms-excel', headers: { 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent('통합예약신청자목록.xls') } });
+  });
+  const app2 = await ctx2.newPage();
+  app2.on('pageerror', (e) => errors.push('웹앱2: ' + e.message));
+  await app2.goto(APP);
+  await app2.waitForSelector('[data-act=cms]');
+  await app2.evaluate(() => { window.__mark = 'first'; });
+  const [cms2] = await Promise.all([ctx2.waitForEvent('page'), app2.click('[data-act=cms]')]);
+  await cms2.waitForURL(/BD_selectReservationMngList/, { timeout: 10000 });
+  if (!/BD_selectReservationMngList/.test(cms2.url())) throw new Error('관리자 목록 화면이 아님: ' + cms2.url());
+  cms2.on('pageerror', (e) => errors.push('관리자2: ' + e.message));
+  let extra2 = 0;
+  ctx2.on('page', () => { extra2++; });
+  await cms2.evaluate((u) => { window.__excelDownWebapp = u; }, APP);
+  await cms2.addScriptTag({ content: fs.readFileSync(DL, 'utf8') });
+  await cms2.waitForSelector('#excelDownPanel');
+  await cms2.click('#excelDownPanel .xd-primary');
+  await app2.waitForSelector('[data-m=yes]', { timeout: 30000 });
+  if (extra2 || (await app2.evaluate(() => window.__mark)) !== 'first') throw new Error('먼저 연 웹앱 창으로 가지 않음');
+  await app2.click('[data-m=yes]');
+  await cms2.waitForFunction(() => /점검 웹앱에 올렸습니다/.test((document.querySelector('#excelDownPanel .xd-result') || {}).textContent || ''), null, { timeout: 20000 });
+  // 웹앱의 버튼을 다시 누르면 열린 관리자 창으로 (새 창 없음)
+  await app2.click('[data-act=cms]');
+  await app2.waitForTimeout(500);
+  if (extra2) throw new Error('관리자 창이 하나 더 열림');
+  console.log('웹앱 먼저 → 관리자 열기 → 열린 웹앱 창으로 보내기 확인');
+  await app2.screenshot({ path: path.join(OUT, '5-app-first.png') });
 
   console.log('페이지 오류:', errors.length ? errors.join(' | ') : '없음');
   if (errors.length) process.exitCode = 1;
