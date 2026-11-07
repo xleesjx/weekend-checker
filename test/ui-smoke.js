@@ -123,16 +123,25 @@ const server = http.createServer((req, res) => {
   if (absCount !== 2) throw new Error('결석 기록 수: ' + absCount);
   await page.selectOption('.abs-tbl tbody tr:first-child select', '질병');
   // 기한 후 취소 학생 직접 등록 (학생명·학교·학년반만)
-  await page.fill('#an', '테스트학생'); await page.fill('#as', '가온초'); await page.fill('#ab', '3학년 2반');
+  await page.fill('#abs-new .abs-new:nth-child(1) .an', '테스트학생'); await page.fill('#abs-new .abs-new:nth-child(1) .as', '가온초'); await page.fill('#abs-new .abs-new:nth-child(1) .ab', '3학년 2반');
+  await page.fill('#abs-new .abs-new:nth-child(2) .an', '빈칸학생');
   await page.click('[data-x=abs-add]');
-  await page.waitForFunction(() => document.querySelectorAll('.abs-tbl tbody tr').length === 3);
+  await page.waitForSelector('.abs-new.bad');
+  await page.fill('#abs-new .abs-new:nth-child(2) .as', '해솔초'); await page.fill('#abs-new .abs-new:nth-child(2) .ab', '4-1');
+  await page.click('[data-x=abs-addrow]');
+  if ((await page.$$('#abs-new .abs-new')).length !== 4) throw new Error('줄 추가 안 됨');
+  await page.fill('#abs-new .abs-new:nth-child(4) .an', '넷째학생'); await page.fill('#abs-new .abs-new:nth-child(4) .as', '다솜초'); await page.fill('#abs-new .abs-new:nth-child(4) .ab', '2-3');
+  await page.click('[data-x=abs-add]');
+  await page.waitForFunction(() => document.querySelectorAll('.abs-tbl tbody tr').length === 5);
+  const firstCols = await page.$$eval('.abs-tbl tbody tr td.cls-name', (t) => t.map((x) => x.textContent));
+  console.log('결석 목록 반:', firstCols.join(' | '));
   await page.waitForFunction(() => /모두 저장됨/.test((document.getElementById('abs-sync') || {}).textContent || ''));
   {
     const rows = env.ctx.readTable_('결석기록').rows;
     const man = rows.filter((r) => r[3] === '테스트학생')[0];
-    if (rows.length !== 3 || !man || man[9] !== '기한 후 취소' || man[5] !== '3-2' || man[4] !== '가온초등학교') throw new Error('결석 기록 시트: ' + JSON.stringify(rows.map((r) => [r[3], r[9]])));
+    if (rows.length !== 5 || !man || man[9] !== '기한 후 취소' || man[5] !== '3-2' || man[4] !== '가온초등학교') throw new Error('결석 기록 시트: ' + JSON.stringify(rows.map((r) => [r[3], r[9]])));
     if (!rows.some((r) => r[9] === '질병')) throw new Error('사유 변경이 시트에 저장되지 않음');
-    console.log('결석: 한 줄 목록 3명, 직접 등록·사유 변경 시트 저장 확인');
+    console.log('결석: 한 줄 목록 5명, 여러 명 한꺼번에 등록·사유 변경 시트 저장 확인');
   }
   await page.screenshot({ path: path.join(OUT, '6-abs.png'), fullPage: true });
   // 출석부: 단계별
@@ -198,6 +207,11 @@ const server = http.createServer((req, res) => {
   if (!env.ctx.readTable_('결석기록').rows.some((r) => r[8] === '출석부 결석 체크' && r[9] === '당일 무단결석')) throw new Error('출석부 결석 체크가 시트에 저장되지 않음');
   console.log('출석부 결석 체크 → 결석 기록 저장 확인');
   await page.screenshot({ path: path.join(OUT, '8-att-saved.png'), fullPage: true });
+  await page.click('[data-view=abs]');
+  const labels2 = await page.$$eval('.abs-tbl tbody tr td.cls-name', (t) => t.map((x) => x.textContent));
+  console.log('출석부 저장 뒤 결석 목록 반:', labels2.join(' | '));
+  await page.screenshot({ path: path.join(OUT, '6b-abs-after.png'), fullPage: true });
+  await page.click('[data-view=att]');
   // 처음부터 다시 만들어도 반 설정이 그대로 남아 있어야 함
   await page.click('[data-x=att-rebuild]');
   await page.click('[data-x=att-next]');

@@ -203,3 +203,12 @@ tr.cut td { text-decoration: line-through; color: #94A3B8; }
 .abs-chk { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; font-size: 13px; padding: 3px 8px; border: 1px solid #CBD5E1; border-radius: 6px; margin-right: 6px; cursor: pointer; background: #fff; }
 .abs-chk input { width: 18px; height: 18px; margin: 0; }
 .abs-chk.on { background: #FEE2E2; border-color: #DC2626; color: #B91C1C; }
+
+.att-help { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; background: #F8FAFF; border-color: #BFD0F5; }
+.att-help .ah { display: flex; gap: 10px; align-items: flex-start; line-height: 1.7; }
+.att-help .ah > span:first-child { flex: none; margin-top: 2px; }
+@media (max-width: 720px) { .att-help { grid-template-columns: 1fr; } }
+.abs-new.bad input { border-color: #DC2626; background: #FEF2F2; }
+.abs-new input { min-width: 0; flex: 1 1 auto; }
+.abs-tbl td.cls-name { font-weight: 700; color: #1E3A8A; }
+.abs-tbl tr.grp td { border-top: 2px solid #94A3B8; }
