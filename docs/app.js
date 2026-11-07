@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '24';
+  var APP_VERSION = '25';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -718,21 +718,111 @@
       }).join('') : '<tr><td colspan="6" class="muted">기록이 없습니다.</td></tr>') + '</tbody></table></div></section>';
   }
 
+  /* ───────── 설정 (구글 시트 대신 웹앱에서) ───────── */
+
+  var GRADES = ['초1', '초2', '초3', '초4', '초5', '초6', '중1', '중2', '중3', '고1', '고2', '고3'];
+  function setSpec(tab) {
+    var s = S.settings || {};
+    var clsNames = ((s.edit && s.edit.classes) || []).map(function (r) { return r[2] || r[1]; }).filter(Boolean);
+    return {
+      dates: { title: '수업일', help: '회차와 수업일입니다. 수업이 없는 주는 빼면 됩니다. 저장하면 날짜순으로 정렬됩니다.',
+        cols: [{ h: '회차', w: 70 }, { h: '수업일', t: 'date', w: 170 }, { h: '비고 (예: 마스터 2기 시작)', w: 280 }] },
+      classes: { title: '반 (접수 단위)', help: '통합예약 예약명 하나가 접수명 하나입니다. 한 수업반을 학년별로 따로 받으면 줄을 나눠 같은 수업반 이름을 적습니다. 운영 회차를 비우면 처음부터 끝까지입니다.',
+        cols: [{ h: '시간대', t: 'sel', o: ['오전', '오후'], w: 80 }, { h: '수업반', w: 120 }, { h: '접수명', w: 170, ph: '비우면 수업반과 같음' }, { h: '예약명 키워드', w: 150 },
+          { h: '대상 시작', t: 'sel', o: GRADES, w: 80 }, { h: '대상 끝', t: 'sel', o: [''].concat(GRADES), w: 80 }, { h: '정원', w: 60 }, { h: '시작 회차', w: 70 }, { h: '끝 회차', w: 70 }, { h: '비고', w: 180 }] },
+      users: { title: '점검자', help: '이 웹앱에 로그인할 수 있는 사람입니다. 구글 계정 이메일을 적습니다. 점검자는 누구나 설정을 바꿀 수 있습니다.',
+        cols: [{ h: '구글 계정 이메일', w: 280 }, { h: '이름', w: 140 }] },
+      restrict: { title: '신청제한 명단 (직접 적는 것)', help: '결석 메뉴에 기록한 학생은 여기 적지 않아도 자동으로 제한됩니다. 그 밖에 따로 제한할 학생만 적습니다. 제한 수업일을 비우면 결석 수업일 다음 수업일입니다.',
+        cols: [{ h: '결석 수업일', t: 'date', w: 160 }, { h: '학생명', w: 100 }, { h: '학교', w: 140 }, { h: '사유', w: 120 }, { h: '제한 수업일', t: 'date', w: 160 }, { h: '메모', w: 180 }, { h: '등록자', ro: true, w: 90 }] },
+      map: { title: '예약명 연결', help: '설정된 반과 이름이 다른 예약명을 어느 반으로 받을지 기억해 둔 것입니다. 잘못 연결했으면 접수명을 바꾸거나 줄을 지웁니다.', noAdd: true,
+        cols: [{ h: '예약명 (날짜 제외)', ro: true, w: 340 }, { h: '접수명', t: 'sel', o: clsNames, w: 180 }, { h: '등록자', ro: true, w: 90 }, { h: '등록시각', ro: true, w: 150 }] },
+      rooms: { title: '교실', help: '출석부 반 설정에서 고르는 교실 목록입니다.', cols: [{ h: '교실 이름', w: 200 }] }
+    }[tab];
+  }
+  var SET_TABS = ['dates', 'classes', 'users', 'rooms', 'restrict', 'map'];
+  S.setDraft = {}; S.setErr = {};
+
+  function setRows(tab) { return S.setDraft[tab] || (S.settings.edit && S.settings.edit[tab]) || []; }
+
+  function setEditor(tab) {
+    var sp = setSpec(tab), rows = setRows(tab), dirty = !!S.setDraft[tab];
+    var html = '<section class="card pad set-sec" id="set-' + tab + '" style="display:flex;flex-direction:column;gap:8px"><div class="row between"><h2 style="margin:0">' + esc(sp.title) +
+      (dirty ? ' <span class="badge warn">저장 안 됨</span>' : '') + '</h2><div class="row">' +
+      (dirty ? '<button class="btn sm" data-x="set-reset" data-tab="' + tab + '">되돌리기</button>' : '') +
+      '<button class="btn sm' + (dirty ? ' primary' : '') + '" data-x="set-save" data-tab="' + tab + '">저장</button></div></div>' +
+      '<p class="muted small" style="margin:0">' + esc(sp.help) + '</p>' +
+      (S.setErr[tab] ? '<div class="small" style="color:var(--red);white-space:pre-line;background:var(--red-bg);padding:8px;border-radius:6px">' + esc(S.setErr[tab]) + '</div>' : '') +
+      '<div class="tbox"><table class="grid set-tbl"><thead><tr>' + sp.cols.map(function (c) { return '<th style="min-width:' + (c.w || 120) + 'px">' + esc(c.h) + '</th>'; }).join('') + '<th></th></tr></thead><tbody>';
+    html += rows.map(function (r, ri) {
+      return '<tr>' + sp.cols.map(function (c, ci) {
+        var v = r[ci] === undefined ? '' : String(r[ci]);
+        var attr = ' data-sf="' + tab + '" data-c="' + ci + '" aria-label="' + esc(c.h) + '"';
+        if (c.ro) return '<td class="muted small">' + esc(v) + '<input type="hidden"' + attr + ' value="' + esc(v) + '"></td>';
+        if (c.t === 'sel') {
+          var opts = c.o.indexOf(v) < 0 && v ? c.o.concat([v]) : c.o;
+          return '<td><select' + attr + '>' + opts.map(function (o) { return '<option' + (o === v ? ' selected' : '') + ' value="' + esc(o) + '">' + esc(o || '—') + '</option>'; }).join('') + '</select></td>';
+        }
+        return '<td><input type="' + (c.t === 'date' ? 'date' : 'text') + '"' + attr + ' value="' + esc(v) + '"' + (c.ph ? ' placeholder="' + esc(c.ph) + '"' : '') + '></td>';
+      }).join('') + '<td><button class="btn sm" data-x="set-del" data-tab="' + tab + '" data-r="' + ri + '" title="줄 지우기" aria-label="줄 지우기">✕</button></td></tr>';
+    }).join('') || '<tr><td colspan="' + (sp.cols.length + 1) + '" class="muted">없음</td></tr>';
+    html += '</tbody></table></div>' + (sp.noAdd ? '' : '<div><button class="btn sm" data-x="set-add" data-tab="' + tab + '">＋ 줄 추가</button></div>') + '</section>';
+    return html;
+  }
+
+  /** 화면의 입력값을 초안으로 (다시 그려도 입력한 것이 남도록) */
+  function setCapture(tab) {
+    var sec = document.getElementById('set-' + tab);
+    if (!sec) return;
+    var rows = [];
+    sec.querySelectorAll('tbody tr').forEach(function (tr) {
+      var cells = tr.querySelectorAll('[data-sf]');
+      if (!cells.length) return;
+      var r = [];
+      cells.forEach(function (el) { r[+el.getAttribute('data-c')] = el.value; });
+      rows.push(r);
+    });
+    S.setDraft[tab] = rows;
+  }
+
+  function setSave(tab) {
+    setCapture(tab);
+    setBusy(true);
+    api('settingsSave', { tab: tab, rows: S.setDraft[tab] }).then(function (res) {
+      S.setDraft[tab] = null; S.setErr[tab] = '';
+      if (res.rev) S.rev = res.rev;
+      toast(setSpec(tab).title + ' 설정을 저장했습니다.', 2500);
+      S.settings = null;
+      return load(S.date);
+    }).catch(function (er) {
+      S.setErr[tab] = /알 수 없는 요청/.test(er.message) ? 'Apps Script(Code.gs)를 새 버전으로 바꿔야 웹앱에서 저장할 수 있습니다.' : er.message;
+      render();
+    }).then(function () { setBusy(false); });
+  }
+
   function viewSettings() {
     var s = S.settings;
     if (!s) { loadSettings(); return '<div class="card pad muted">설정을 불러오는 중…</div>'; }
-    function table(head, rows) {
-      return '<div class="tbox"><table class="grid"><thead><tr>' + head.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
-        (rows.length ? rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') : '<tr><td colspan="' + head.length + '" class="muted">없음</td></tr>') + '</tbody></table></div>';
-    }
-    return '<section class="card pad row between"><div><b>설정은 구글 시트의 「설정_」 탭과 「신청제한」 탭에서 고칩니다</b><div class="muted small">고친 뒤 이 화면을 새로고침하면 바로 적용됩니다. 단계별 설정 화면은 다음 버전에서 제공합니다.</div></div>' +
-      '<div class="row"><a class="btn" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">구글 시트 열기</a><button class="btn" data-act="reload-settings">새로고침</button></div></section>' +
-      '<section class="card pad"><h2>수업일</h2>' + table(['회차', '수업일', '비고'], s.dates.map(function (d) { return [d.n, d.date, d.note]; })) + '</section>' +
-      '<section class="card pad"><h2>반 (접수 단위)</h2>' + table(['시간대', '수업반', '접수명', '예약명 키워드', '대상', '정원', '운영 회차'], s.classes.map(function (c) { return [c['시간대'], c['수업반'], c['접수명'], c.keyword, c.rangeText, c.cap, (c.from || 1) + '~' + (c.to || '끝')]; })) + '</section>' +
-      '<section class="card pad"><h2>신청제한 명단 ' + tip('결석 수업일·학생명·학교를 적으면 다음 수업일(제한 수업일)에 신청한 경우 「신청 제한 학생」으로 표시합니다. 학교는 앞 두 글자로 비교합니다.') + '</h2>' + table(['결석 수업일', '학생명', '학교', '사유', '제한 수업일', '메모'], s.restrictions.map(function (r) { return [r.absent, r.name, r.school, r.reason, r.date, r.memo]; })) + '</section>' +
-      '<section class="card pad"><h2>예약명 연결</h2>' + table(['예약명(날짜 제외)', '접수명', '등록자', '등록시각'], s.mappings) + '</section>' +
-      '<section class="card pad row between"><div><h2>학교 목록</h2><span class="muted small">' + s.schoolCount + '곳 등록 · 점검자 ' + esc(s.users.join(', ')) + '</span></div>' +
-      (s.hasNeisKey ? '<button class="btn" data-act="neis">NEIS에서 학교 목록 새로 가져오기</button>' : '<span class="muted small">NEIS 인증키를 스크립트 속성에 넣으면 자동으로 가져올 수 있습니다</span>') + '</section>';
+    if (!s.edit) return '<div class="card pad">Apps Script(Code.gs)를 새 버전으로 바꾸면 여기에서 설정을 고칠 수 있습니다. <a href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">구글 시트 열기</a></div>';
+    var r = s.cancelRule || cancelRule();
+    var html = '<section class="card pad row between"><div><b>설정</b><div class="muted small">고친 뒤 표마다 [저장]을 누르면 점검자 모두에게 바로 적용됩니다. 바꾼 기록은 맨 아래에 남습니다.</div></div>' +
+      '<div class="row"><a class="btn sm" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">구글 시트 열기</a><button class="btn sm" data-act="reload-settings">새로고침</button></div></section>';
+    // 취소 기한
+    html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><h2 style="margin:0">취소 기한</h2>' +
+      '<p class="muted small" style="margin:0">이 시각 이후에 예약취소한 학생은 결석 메뉴에 「기한 후 취소」 후보로 나옵니다. 지금 운영 규정: 수업 2일 전(목) 16:00까지 취소.</p>' +
+      '<div class="row" style="gap:8px">수업일 <select id="ld">' + [0, 1, 2, 3, 4, 5, 6, 7].map(function (d) { return '<option value="' + d + '"' + (d === r.days ? ' selected' : '') + '>' + (d === 0 ? '당일' : d + '일 전') + '</option>'; }).join('') +
+      '</select><input type="time" id="lt" value="' + esc(r.time) + '" aria-label="시각"> 이후 취소 = 기한 후 취소 <button class="btn sm primary" data-x="rule-save">저장</button>' +
+      (r.by ? '<span class="muted small">' + esc(r.by) + ' · ' + esc(String(r.at).slice(5, 16)) + '</span>' : '') + '</div></section>';
+    SET_TABS.forEach(function (t) { html += setEditor(t); });
+    // 학교
+    html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><h2 style="margin:0">학교 목록 <span class="muted small" style="font-weight:400">' + s.schoolCount + '곳</span></h2>' +
+      '<p class="muted small" style="margin:0">관외 학교·학교명 확인에 씁니다. 목록에 없는 울산 학교는 정식 이름으로 추가합니다(예: 가온초등학교).</p>' +
+      '<div class="row"><input type="text" id="sch-add" placeholder="학교 정식 이름" style="width:220px" aria-label="추가할 학교"><button class="btn sm" data-x="school-add">추가</button>' +
+      (s.hasNeisKey ? '<button class="btn sm" data-act="neis">NEIS에서 학교 목록 새로 가져오기</button>' : '') + '</div></section>';
+    // 기록
+    html += '<section class="card pad"><h2 style="margin:0 0 8px">최근 바꾼 기록</h2><div class="tbox"><table class="grid"><thead><tr><th>시각</th><th>변경자</th><th>항목</th><th>내용</th></tr></thead><tbody>' +
+      ((s.log || []).map(function (l) { return '<tr><td>' + esc(String(l[0]).slice(5, 16)) + '</td><td>' + esc(l[1]) + '</td><td>' + esc(l[2]) + '</td><td>' + esc(l[3]) + '</td></tr>'; }).join('') || '<tr><td colspan="4" class="muted">없음</td></tr>') +
+      '</tbody></table></div></section>';
+    return html;
   }
 
   function loadSettings() {
@@ -773,6 +863,7 @@
     var m = /^\d{4}-(\d{2})-(\d{2})[ T](\d{2}:\d{2})/.exec(String(t || ''));
     return m ? (+m[1]) + '/' + (+m[2]) + ' ' + m[3] : String(t || '');
   }
+  function roomList(cur) { var l = (S.data && S.data.rooms && S.data.rooms.length ? S.data.rooms : Roster.ROOMS).slice(); if (cur && l.indexOf(cur) < 0) l.push(cur); return l; }
   function mmdd(date) { return date.slice(5, 7) + date.slice(8, 10); }
   function md(date) { return (+date.slice(5, 7)) + '월 ' + (+date.slice(8, 10)) + '일'; }
 
@@ -1018,7 +1109,7 @@
 
   /* ───────── 기한 후 취소 자동 후보 ───────── */
 
-  function cancelRule() { return (S.data && S.data.cancelRule) || { days: 1, time: '18:00', isDefault: true }; }
+  function cancelRule() { return (S.data && S.data.cancelRule) || { days: 2, time: '16:00', isDefault: true }; }
   /** 기한 시각 'YYYY-MM-DD HH:MM' (수업일 days일 전 time) */
   function cancelDeadline() { var r = cancelRule(); return Core.addDays(S.date, -r.days) + ' ' + r.time; }
   function ruleText() {
@@ -1044,7 +1135,7 @@
     var nSkip = Object.keys(lateSkips()).length;
     var html = '<section class="card pad" style="display:flex;flex-direction:column;gap:8px;border:2px solid ' + (list.length ? '#F59E0B' : 'var(--line)') + '">' +
       '<div class="row between"><div><b>기한 후 취소 자동 후보 ' + list.length + '명</b> <span class="muted small">기준: <b>' + esc(ruleText()) + '</b> (' + esc(shortTs(cancelDeadline())) + '부터)' +
-      (cancelRule().isDefault ? ' · 아직 기본값입니다' : '') + '</span></div><div class="row"><button class="btn sm" data-x="late-rule">기준 바꾸기</button>' +
+      '</span></div><div class="row"><button class="btn sm" data-x="late-rule" title="설정 메뉴에서 바꿉니다">기준 바꾸기</button>' +
       (list.length > 1 ? '<button class="btn sm primary" data-x="late-all">모두 등록</button>' : '') + '</div></div>';
     if (list.length) {
       html += '<div class="tbox"><table class="grid"><thead><tr><th>반</th><th>학생명</th><th>학교</th><th>학년반</th><th>취소 시각</th><th></th></tr></thead><tbody>' + list.map(function (r) {
@@ -1063,21 +1154,19 @@
       cancelAt: shortTs(r.cancelAt), src: '기한 후 취소 (자동 후보)', reason: '기한 후 취소' };
   }
 
-  function lateRuleDialog() {
-    var r = cancelRule();
-    modal('<h2 style="margin:0">기한 후 취소 기준</h2><p class="muted small" style="margin:0">이 시각 이후에 예약취소한 학생을 「기한 후 취소」 후보로 보여 줍니다. 점검자 모두에게 같은 기준이 적용됩니다.</p>' +
-      '<div class="row" style="gap:8px">수업일 <select id="ld">' + [0, 1, 2, 3, 4, 5, 6, 7].map(function (d) { return '<option value="' + d + '"' + (d === r.days ? ' selected' : '') + '>' + (d === 0 ? '당일' : d + '일 전') + '</option>'; }).join('') +
-      '</select><input type="time" id="lt" value="' + esc(r.time) + '" aria-label="시각"> 이후 취소</div>' +
-      '<div class="row" style="justify-content:flex-end"><button class="btn" data-m="no">닫기</button><button class="btn primary" data-m="ok">저장</button></div>', function (m, b, w, close) {
-      if (m === 'no') return close();
-      var days = +w.querySelector('#ld').value, time = w.querySelector('#lt').value;
-      if (!/^\d{2}:\d{2}$/.test(time)) { toast('시각을 골라 주세요.'); return; }
-      close(); setBusy(true);
-      api('cancelRule', { days: days, time: time }).then(function (res) {
-        S.data.cancelRule = res.rule; if (res.rev) S.rev = res.rev; render(); toast('기준을 「' + ruleText() + '」로 바꿨습니다.');
-      }).catch(function (er) { toast(/알 수 없는|unknown|BAD_ACTION/i.test(er.message) ? 'Apps Script(Code.gs)를 새 버전으로 바꿔야 기준을 저장할 수 있습니다.' : er.message, 5000); })
-        .then(function () { setBusy(false); });
-    });
+  function markDirty(tab) {
+    var b = document.querySelector('[data-x=set-save][data-tab="' + tab + '"]');
+    if (b && !b.classList.contains('primary')) { b.classList.add('primary'); var h = b.closest('section').querySelector('h2'); if (h && !h.querySelector('.badge')) h.insertAdjacentHTML('beforeend', ' <span class="badge warn">저장 안 됨</span>'); }
+  }
+
+  function saveRule(days, time) {
+    if (!/^\d{2}:\d{2}$/.test(time)) { toast('시각을 골라 주세요.'); return; }
+    setBusy(true);
+    api('cancelRule', { days: days, time: time }).then(function (res) {
+      S.data.cancelRule = res.rule; if (S.settings) S.settings.cancelRule = res.rule; if (res.rev) S.rev = res.rev;
+      S.settings = null; render(); toast('취소 기한을 「' + ruleText() + '」으로 바꿨습니다.');
+    }).catch(function (er) { toast(/알 수 없는 요청/.test(er.message) ? 'Apps Script(Code.gs)를 새 버전으로 바꿔야 저장할 수 있습니다.' : er.message, 5000); })
+      .then(function () { setBusy(false); });
   }
 
   /** 결석 기록의 취소 시각 (기록에 없으면 이번 명단에서) */
@@ -1275,7 +1364,7 @@
 
   function roomSelect(i, f, v) {
     return '<select data-xc="att-b" data-i="' + i + '" data-f="' + f + '" aria-label="교실"><option value="">교실 선택</option>' +
-      Roster.ROOMS.map(function (r) { return '<option' + (r === v ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select>';
+      roomList(v).map(function (r) { return '<option' + (r === v ? ' selected' : '') + '>' + esc(r) + '</option>'; }).join('') + '</select>';
   }
 
   function blockCard(b, i, ck) {
@@ -1565,7 +1654,19 @@
       if (da && confirm(da.name + ' 학생의 결석 기록을 삭제할까요?')) deleteAbs(da);
     }
     else if (x === 'abs-add') absAddManual();
-    else if (x === 'late-rule') lateRuleDialog();
+    else if (x === 'set-add') { var ta = t.getAttribute('data-tab'); setCapture(ta); S.setDraft[ta].push([]); render(); }
+    else if (x === 'set-del') { var td = t.getAttribute('data-tab'); setCapture(td); S.setDraft[td].splice(+t.getAttribute('data-r'), 1); render(); }
+    else if (x === 'set-reset') { S.setDraft[t.getAttribute('data-tab')] = null; S.setErr[t.getAttribute('data-tab')] = ''; render(); }
+    else if (x === 'set-save') setSave(t.getAttribute('data-tab'));
+    else if (x === 'school-add') {
+      var nm = (document.getElementById('sch-add').value || '').trim();
+      if (!nm) { toast('학교 이름을 적어 주세요.'); return; }
+      setBusy(true);
+      api('settingsSave', { tab: 'schoolAdd', rows: [[nm]] }).then(function () { toast(nm + '을(를) 추가했습니다.'); S.settings = null; return load(S.date); })
+        .catch(function (er) { toast(er.message, 5000); }).then(function () { setBusy(false); });
+    }
+    else if (x === 'rule-save') saveRule(+document.getElementById('ld').value, document.getElementById('lt').value);
+    else if (x === 'late-rule') { S.view = 'settings'; render(); window.scrollTo(0, 0); }
     else if (x === 'late-add') { var lr = rowByNo(t.getAttribute('data-no')); if (lr) { saveAbs(lateRecord(lr)); toast(Core.str(lr.cells[9]) + ' 학생을 「기한 후 취소」로 등록했습니다.', 2000); } }
     else if (x === 'late-all') { var la = lateCancels(); la.forEach(function (r) { saveAbs(lateRecord(r), true); }); render(); toast(la.length + '명을 「기한 후 취소」로 등록했습니다.', 2500); }
     else if (x === 'late-skip') { var sk = lateSkips(); sk[t.getAttribute('data-no')] = 1; try { localStorage.setItem(skipKey(), JSON.stringify(sk)); } catch (e) { /* 무시 */ } render(); }
@@ -1728,10 +1829,12 @@
       var sn = e.target.getAttribute('data-sel');
       if (e.target.checked) S.sel[sn] = true; else delete S.sel[sn];
       var sb = document.getElementById('selbar'); if (sb) sb.innerHTML = selBar();
-    } else if (e.target.hasAttribute('data-xc')) extraChange(e.target);
+    } else if (e.target.hasAttribute('data-sf')) { setCapture(e.target.getAttribute('data-sf')); markDirty(e.target.getAttribute('data-sf')); }
+    else if (e.target.hasAttribute('data-xc')) extraChange(e.target);
   });
 
   root.addEventListener('input', function (e) {
+    if (e.target.hasAttribute('data-sf')) { setCapture(e.target.getAttribute('data-sf')); markDirty(e.target.getAttribute('data-sf')); return; }
     if (e.target.id === 'q' && !e.isComposing) applySearch(e.target.value);
     else if (e.target.hasAttribute('data-xi')) extraInput(e.target);
   });

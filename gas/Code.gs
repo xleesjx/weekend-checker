@@ -9,7 +9,7 @@ var TZ = 'Asia/Seoul';
 var SHEET = {
   LIST: '통합명단', SUMMARY: '점검현황', STATUS: '처리기록', UPLOADS: '업로드기록', RESTRICT: '신청제한',
   DATES: '설정_수업일', CLASSES: '설정_반', SCHOOLS: '설정_학교', MAP: '예약명연결', USERS: '점검자',
-  LINKS: '같은반요청', ABS: '결석기록', ATT: '출석부'
+  LINKS: '같은반요청', ABS: '결석기록', ATT: '출석부', SETLOG: '설정변경기록'
 };
 var TOPIC_SHEET_DEFAULT = '165RlpeCfhR9Z4n_Qq2IoPMTXBlkSiUWZMyBBhO77MBw';
 var TOPIC_TAB_DEFAULT = '하반기';
@@ -37,6 +37,7 @@ function init_() {
   HEADERS[SHEET.LINKS] = ['묶음ID', '수업일', '범위', '신청일련번호', '학생명', '학교', '메모', '등록자', '등록시각'];
   HEADERS[SHEET.ABS] = ['기록ID', '수업일', '신청일련번호', '학생명', '학교', '학반', '반', '연락처', '경로', '사유', '취소시각', '메모', '출석인정', '기록자', '기록시각'];
   HEADERS[SHEET.ATT] = ['수업일', '차수', '저장시각', '저장자', '내용'];
+  HEADERS[SHEET.SETLOG] = ['시각', '변경자', '항목', '내용'];
 }
 
 /* ───────── 진입점 ───────── */
@@ -341,6 +342,7 @@ API.state = function (req, user) {
   out.links = readLinks_();
   out.absences = readAbsences_().filter(function (a) { return a.date === date; });
   out.cancelRule = cancelRule_();
+  out.rooms = rooms_();
   var att = readAtt_();
   out.att = att.filter(function (a) { return a.date === date; }).pop() || null;
   out.attPrev = att.filter(function (a) { return a.date < date; }).pop() || null;
@@ -424,7 +426,7 @@ function cancelRule_() {
     var r = JSON.parse(PropertiesService.getScriptProperties().getProperty('CANCEL_RULE') || 'null');
     if (r && r.days >= 0 && /^\d{2}:\d{2}$/.test(r.time)) return { days: +r.days, time: r.time, by: r.by || '', at: r.at || '' };
   } catch (e) { /* 기본값 */ }
-  return { days: 1, time: '18:00', by: '', at: '', isDefault: true };
+  return { days: 2, time: '16:00', by: '', at: '', isDefault: true };  // 운영 규정: 수업 2일 전(목) 16:00까지 취소
 }
 
 API.cancelRule = function (req, user) {
@@ -433,6 +435,7 @@ API.cancelRule = function (req, user) {
   return withLock_(function () {
     var r = { days: days, time: time, by: user.name, at: now_() };
     PropertiesService.getScriptProperties().setProperty('CANCEL_RULE', JSON.stringify(r));
+    appendRows_(SHEET.SETLOG, [[r.at, user.name, '취소 기한', '수업 ' + days + '일 전 ' + time + ' 이후 취소 = 기한 후 취소']]);
     return { rule: r, rev: bumpRev_() };
   });
 };
@@ -648,8 +651,110 @@ API.settings = function () {
     mappings: readTable_(SHEET.MAP).rows,
     schoolCount: ctx.schools.length,
     users: readTable_(SHEET.USERS).rows.map(function (r) { return r[1] || r[0]; }),
+    edit: {
+      dates: readTable_(SHEET.DATES).rows.map(function (r) { return [r[0], parseSheetDate_(r[1], ctx.year) || r[1], r[2] || '']; }),
+      classes: readTable_(SHEET.CLASSES).rows.map(function (r) { var o = []; for (var i = 0; i < 10; i++) o.push(r[i] || ''); return o; }),
+      users: readTable_(SHEET.USERS).rows.map(function (r) { return [r[0], r[1] || '']; }),
+      restrict: readTable_(SHEET.RESTRICT).rows.map(function (r) { return [parseSheetDate_(r[0], ctx.year) || r[0], r[1] || '', r[2] || '', r[3] || '', parseSheetDate_(r[4], ctx.year) || r[4] || '', r[5] || '', r[6] || '']; }),
+      map: readTable_(SHEET.MAP).rows.map(function (r) { return [r[0], r[1] || '', r[2] || '', r[3] || '']; }),
+      rooms: rooms_().map(function (x) { return [x]; })
+    },
+    cancelRule: cancelRule_(),
+    log: readTable_(SHEET.SETLOG).rows.slice(-15).reverse(),
     hasNeisKey: !!PropertiesService.getScriptProperties().getProperty('NEIS_KEY')
   };
+};
+
+function rooms_() {
+  try { var r = JSON.parse(PropertiesService.getScriptProperties().getProperty('ROOMS') || 'null'); if (Array.isArray(r) && r.length) return r; } catch (e) { /* 기본값 */ }
+  return ['라온실', '혜윰실', '놀이실', '창의실', 'SW체험교실'];
+}
+
+var GRADE_RE_ = /^(초[1-6]|중[1-3]|고[1-3])$/;
+var DATE_RE_ = /^\d{4}-\d{2}-\d{2}$/;
+function dateOk_(d) { if (!DATE_RE_.test(d)) return false; var t = new Date(d + 'T00:00:00Z'); return !isNaN(t) && t.toISOString().slice(0, 10) === d; }
+
+/**
+ * 웹앱 설정 메뉴에서 표 하나를 통째로 저장합니다. 점검자 누구나 바꿀 수 있고, 바꾼 기록은 「설정변경기록」 탭에 남습니다.
+ * tab: dates | classes | users | restrict | map | rooms | schoolAdd
+ */
+API.settingsSave = function (req, user) {
+  var tab = req.tab, rows = Array.isArray(req.rows) ? req.rows : [];
+  var clean = rows.map(function (r) { return (Array.isArray(r) ? r : []).map(function (c) { return Core.str(c).slice(0, 200); }); })
+    .filter(function (r) { return r.some(function (c) { return c !== ''; }); });
+  var errs = [];
+  var need = function (ok, msg) { if (!ok && errs.length < 8) errs.push(msg); };
+  var label = { dates: '수업일', classes: '반', users: '점검자', restrict: '신청제한 명단', map: '예약명 연결', rooms: '교실', schoolAdd: '학교 추가' }[tab];
+  if (!label) throw apiError_('BAD', '알 수 없는 설정입니다.');
+  if (clean.length > 500) throw apiError_('BAD', '줄이 너무 많습니다.');
+  var seen = {};
+  if (tab === 'dates') {
+    clean.forEach(function (r, i) {
+      need(/^\d{1,3}$/.test(r[0]), (i + 1) + '번째 줄: 회차는 숫자로 적어 주세요.');
+      need(dateOk_(r[1]), (i + 1) + '번째 줄: 수업일 날짜를 확인해 주세요.');
+      need(!seen[r[1]], (i + 1) + '번째 줄: 같은 수업일(' + r[1] + ')이 두 번 있습니다.'); seen[r[1]] = 1;
+    });
+    clean.sort(function (a, b) { return a[1] < b[1] ? -1 : 1; });
+  } else if (tab === 'classes') {
+    clean.forEach(function (r, i) {
+      var n = (i + 1) + '번째 줄: ';
+      need(r[0] === '오전' || r[0] === '오후', n + '시간대는 오전·오후 중 하나입니다.');
+      need(r[1], n + '수업반 이름을 적어 주세요.');
+      var key = r[2] || r[1];
+      need(!seen[key], n + '접수명 「' + key + '」이 두 번 있습니다.'); seen[key] = 1;
+      need(GRADE_RE_.test(r[4]) && (!r[5] || GRADE_RE_.test(r[5])), n + '대상 학년을 골라 주세요.');
+      need(!r[6] || /^\d{1,3}$/.test(r[6]), n + '정원은 숫자입니다.');
+      need((!r[7] || /^\d{1,3}$/.test(r[7])) && (!r[8] || /^\d{1,3}$/.test(r[8])), n + '시작·끝 회차는 숫자입니다.');
+    });
+  } else if (tab === 'users') {
+    clean.forEach(function (r, i) {
+      r[0] = r[0].toLowerCase();
+      need(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r[0]), (i + 1) + '번째 줄: 이메일을 확인해 주세요.');
+      need(r[1], (i + 1) + '번째 줄: 이름을 적어 주세요.');
+      need(!seen[r[0]], (i + 1) + '번째 줄: 같은 이메일이 두 번 있습니다.'); seen[r[0]] = 1;
+    });
+    need(seen[String(user.email).toLowerCase()], '내 이메일(' + user.email + ')은 지울 수 없습니다. 지우면 바로 접속이 막힙니다.');
+  } else if (tab === 'restrict') {
+    clean.forEach(function (r, i) {
+      need(dateOk_(r[0]), (i + 1) + '번째 줄: 결석 수업일 날짜를 확인해 주세요.');
+      need(r[1], (i + 1) + '번째 줄: 학생명을 적어 주세요.');
+      need(!r[4] || dateOk_(r[4]), (i + 1) + '번째 줄: 제한 수업일 날짜를 확인해 주세요 (비우면 자동).');
+      if (!r[6]) r[6] = user.name;
+    });
+  } else if (tab === 'map') {
+    var names = {};
+    loadCtx_().classes.forEach(function (c) { names[c['접수명']] = 1; });
+    clean.forEach(function (r, i) {
+      need(r[0], (i + 1) + '번째 줄: 예약명을 적어 주세요.');
+      need(names[r[1]], (i + 1) + '번째 줄: 접수명 「' + r[1] + '」이 반 설정에 없습니다.');
+      if (!r[2]) { r[2] = user.name; r[3] = now_(); }
+    });
+  } else if (tab === 'rooms') {
+    clean.forEach(function (r, i) { need(!seen[r[0]], (i + 1) + '번째 줄: 같은 교실 이름이 두 번 있습니다.'); seen[r[0]] = 1; });
+    need(clean.length && clean.length <= 30, '교실은 1~30개까지 적을 수 있습니다.');
+  } else if (tab === 'schoolAdd') {
+    clean.forEach(function (r, i) {
+      need(/(초등학교|중학교|고등학교)$/.test(r[0]), (i + 1) + '번째 줄: 학교 정식 이름(…초등학교·중학교·고등학교)으로 적어 주세요.');
+    });
+  }
+  if (errs.length) throw apiError_('BAD', errs.join('\n'));
+  return withLock_(function () {
+    var sheetOf = { dates: SHEET.DATES, classes: SHEET.CLASSES, users: SHEET.USERS, restrict: SHEET.RESTRICT, map: SHEET.MAP };
+    var detail = clean.length + '줄 저장';
+    if (tab === 'rooms') PropertiesService.getScriptProperties().setProperty('ROOMS', JSON.stringify(clean.map(function (r) { return r[0]; })));
+    else if (tab === 'schoolAdd') {
+      var have = {};
+      readTable_(SHEET.SCHOOLS).rows.forEach(function (r) { have[r[0]] = 1; });
+      var add = clean.filter(function (r) { return !have[r[0]]; }).map(function (r) {
+        var lv = Core.schoolLevel(r[0]) || '';
+        return [r[0], lv || '고', Core.schoolKey(r[0])];
+      });
+      appendRows_(SHEET.SCHOOLS, add);
+      detail = add.map(function (r) { return r[0]; }).join(', ') + ' 추가';
+    } else writeTable_(sheetOf[tab], clean);
+    appendRows_(SHEET.SETLOG, [[now_(), user.name, label, detail]]);
+    return { rev: bumpRev_(), rows: clean.length };
+  });
 };
 
 API.neis = function () {
@@ -713,7 +818,7 @@ function menuImportSchools() {
 function setupSheets() {
   init_();
   var ss = ss_();
-  [SHEET.LIST, SHEET.SUMMARY, SHEET.STATUS, SHEET.UPLOADS, SHEET.RESTRICT, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.USERS, SHEET.LINKS, SHEET.ABS, SHEET.ATT]
+  [SHEET.LIST, SHEET.SUMMARY, SHEET.STATUS, SHEET.UPLOADS, SHEET.RESTRICT, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.USERS, SHEET.LINKS, SHEET.ABS, SHEET.ATT, SHEET.SETLOG]
     .forEach(function (n) { sheet_(n); });
 
   if (!readTable_(SHEET.USERS).rows.length) {

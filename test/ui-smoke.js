@@ -221,6 +221,26 @@ const server = http.createServer((req, res) => {
   console.log('내려받은 파일:', rawDl.suggestedFilename(), dl.suggestedFilename(), dl2.suggestedFilename());
   await page.click('[data-view=settings]');
   await page.waitForSelector('text=수업일');
+  await page.waitForSelector('#set-dates');
+  // 설정 메뉴에서 고치기: 수업일 비고 고치고 줄 추가 → 저장
+  await page.fill('#set-dates tbody tr:nth-child(2) [data-c="2"]', '테스트 비고');
+  await page.waitForSelector('#set-dates .badge.warn');
+  await page.click('[data-x=set-add][data-tab=dates]');
+  if ((await page.inputValue('#set-dates tbody tr:nth-child(2) [data-c="2"]')) !== '테스트 비고') throw new Error('줄 추가하면서 입력이 사라짐');
+  await page.fill('#set-dates tbody tr:last-child [data-c="0"]', '11');
+  await page.fill('#set-dates tbody tr:last-child [data-c="1"]', '2026-12-12');
+  await page.click('[data-x=set-save][data-tab=dates]');
+  await page.waitForFunction(() => /수업일 설정을 저장/.test(document.getElementById('toast').textContent));
+  const dr = env.ctx.readTable_('설정_수업일').rows;
+  if (!dr.some((r) => r[2] === '테스트 비고') || !dr.some((r) => r[1] === '2026-12-12')) throw new Error('설정 저장이 시트에 반영되지 않음');
+  // 잘못된 값은 표 위에 이유
+  await page.waitForSelector('#set-classes');
+  await page.selectOption('#set-classes tbody tr:first-child [data-c="4"]', '초1');
+  await page.fill('#set-classes tbody tr:first-child [data-c="6"]', '열여섯');
+  await page.click('[data-x=set-save][data-tab=classes]');
+  await page.waitForSelector('#set-classes >> text=정원은 숫자입니다');
+  await page.click('[data-x=set-reset][data-tab=classes]');
+  console.log('설정 메뉴: 수업일 고치기·줄 추가·저장, 잘못된 값 안내 확인');
   await page.screenshot({ path: path.join(OUT, '4-settings.png'), fullPage: true });
   await page.click('[data-act=guide]');
   await page.screenshot({ path: path.join(OUT, '5-guide.png') });

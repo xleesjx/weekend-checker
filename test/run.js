@@ -208,4 +208,30 @@ env.topic.rows = [['날짜', '요일', '시간', '영역', '반', '소속', '강
 const tp = env.call('topics', { date: '2026-11-14' });
 ok(tp.ok && tp.items.length === 1 && tp.items[0].cls === '기초1' && /로비코/.test(tp.items[0].tools), '주제·교구 시트에서 그 날짜만 읽기');
 
+
+/* 설정 메뉴 저장 */
+(function settingsTests() {
+  const bad = env.call('settingsSave', { tab: 'dates', rows: [['1', '2026-13-40', ''], ['2', '2026-11-14', '']] });
+  ok(bad.code === 'BAD' && /날짜/.test(bad.error), '잘못된 수업일 거부: ' + bad.error);
+  const dup = env.call('settingsSave', { tab: 'dates', rows: [['1', '2026-11-14', ''], ['2', '2026-11-14', '']] });
+  ok(dup.code === 'BAD' && /두 번/.test(dup.error), '같은 수업일 두 번 거부');
+  const cur = env.call('settings', {}).edit;
+  ok(cur && cur.dates.length && cur.classes.length && cur.users.length && cur.rooms.length === 5, '설정 원본 줄 읽기');
+  const dates = cur.dates.concat([['11', '2026-12-12', '방학 특강']]);
+  let r = env.call('settingsSave', { tab: 'dates', rows: dates });
+  ok(r.ok && env.ctx.readTable_('설정_수업일').rows.some((x) => x[1] === '2026-12-12' && x[2] === '방학 특강'), '수업일 추가 저장');
+  ok(env.ctx.readTable_('설정변경기록').rows.some((x) => x[2] === '수업일'), '설정 바꾼 기록');
+  r = env.call('settingsSave', { tab: 'users', rows: [['kim@example.com', '김선생']] });
+  ok(r.code === 'BAD' && /내 이메일/.test(r.error), '내 계정을 지우면 거부');
+  r = env.call('settingsSave', { tab: 'classes', rows: cur.classes.map((c) => c.slice()).concat([['저녁', 'x', '', '', '초9', '', '', '', '', '']]) });
+  ok(r.code === 'BAD' && /시간대/.test(r.error) && /대상 학년/.test(r.error), '반 설정 검사');
+  r = env.call('settingsSave', { tab: 'rooms', rows: [['라온실'], ['혜윰실'], ['메이커실']] });
+  ok(r.ok && env.call('state', {}).rooms.join() === '라온실,혜윰실,메이커실', '교실 목록 저장');
+  r = env.call('settingsSave', { tab: 'schoolAdd', rows: [['하늘초등학교']] });
+  ok(r.ok && env.ctx.readTable_('설정_학교').rows.some((x) => x[0] === '하늘초등학교' && x[1] === '초'), '학교 직접 추가');
+  ok(env.call('state', {}).cancelRule.days === 2 && env.call('state', {}).cancelRule.time === '16:00', '취소 기한 기본값 2일 전 16:00');
+  r = env.call('cancelRule', { days: 3, time: '25:00' });
+  ok(r.code === 'BAD', '잘못된 취소 기한 거부');
+})();
+
 console.log('테스트 ' + passed + '개 통과');

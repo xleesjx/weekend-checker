@@ -166,6 +166,7 @@ const server = http.createServer((req, res) => {
   await app.waitForTimeout(800);
   await app.click('[data-view=abs]');
   await app.waitForSelector('text=기한 후 취소 자동 후보 2명');
+  if (!(await app.textContent('body')).includes('수업 2일 전 16:00 이후 취소')) throw new Error('기본 취소 기한이 2일 전 16:00이 아님');
   await app.screenshot({ path: path.join(OUT, '6-late.png'), fullPage: true });
   await app.click('[data-x=late-skip]');
   await app.waitForSelector('text=기한 후 취소 자동 후보 1명');
@@ -175,11 +176,13 @@ const server = http.createServer((req, res) => {
   await app.waitForFunction(() => /모두 저장됨/.test((document.getElementById('abs-sync') || {}).textContent || ''));
   const absRows = env.ctx.readTable_('결석기록').rows;
   if (absRows.length !== 2 || !absRows.every((r) => r[9] === '기한 후 취소' && r[10] === '11/6 19:16' && /자동 후보/.test(r[8]))) throw new Error('자동 후보 등록: ' + JSON.stringify(absRows.map((r) => [r[8], r[9], r[10]])));
-  // 기준 바꾸기: 수업 전날 20:00 → 19:16 취소는 후보 아님
+  // 기준 바꾸기 → 설정 메뉴: 수업 전날 20:00
   await app.click('[data-x=late-rule]');
+  await app.waitForSelector('#ld');
+  await app.selectOption('#ld', '1');
   await app.fill('#lt', '20:00');
-  await app.click('[data-m=ok]');
-  await app.waitForSelector('text=수업 전날 20:00 이후 취소');
+  await app.click('[data-x=rule-save]');
+  await app.waitForFunction(() => /수업 전날 20:00/.test(document.getElementById('toast').textContent));
   if (JSON.parse(env.props.CANCEL_RULE || '{}').time !== '20:00') throw new Error('기준 저장 안 됨');
   console.log('기한 후 취소 자동 후보: 2명 표시·제외·모두 등록·기준 바꾸기 확인');
   await app.click('[data-view=home]');
