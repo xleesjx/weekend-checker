@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '26';
+  var APP_VERSION = '28';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -123,7 +123,7 @@
     S.user = { email: p.email, name: p.name };
     showLoader();
     load(null).then(function () {
-      try { if (!localStorage.getItem('guide-v1')) { showGuide(); localStorage.setItem('guide-v1', '1'); } } catch (e) { /* 무시 */ }
+      try { if (!localStorage.getItem('guide-v2')) { localStorage.setItem('guide-v2', '1'); if (!localStorage.getItem('guide-v1')) showGuide(); } } catch (e) { /* 무시 */ }
     });
     restoreView();
     setInterval(poll, POLL_MS);
@@ -431,6 +431,7 @@
     else if (S.view === 'settings') html += viewSettings();
     else if (S.view === 'att') html += viewAtt();
     else if (S.view === 'abs') html += viewAbs();
+    else if (S.view === 'guide') html += viewGuide();
     html += '</main><input type="file" id="pick" accept=".xls" multiple hidden>';
     var y = window.scrollY;
     root.innerHTML = html;
@@ -834,20 +835,88 @@
     api('settings').then(function (res) { S.settings = res; if (S.view === 'settings') render(); }).catch(function (e) { toast(e.message); });
   }
 
-  function showGuide() {
-    var wrap = document.createElement('div');
-    wrap.innerHTML = '<div class="modal-bg"><div class="modal" role="dialog" aria-labelledby="gt"><h2 id="gt" style="margin:0">처음 사용 안내</h2>' +
-      '<ol style="margin:0;padding-left:20px;line-height:1.9">' +
-      '<li><b>회차 확인</b> — 홈 위쪽에서 점검할 수업일을 확인합니다. 보통 자동으로 맞춰집니다.</li>' +
-      '<li><b>통합예약 엑셀 다운로드</b> — 통합예약시스템에서 반별 신청명단을 내려받습니다. 파일 이름은 바꾸지 마세요.</li>' +
-      '<li><b>명단 올리기</b> — 버튼 한 번이면 다운로드 폴더에서 새 명단만 골라 올립니다. 처음 한 번은 다운로드 폴더 안의 「주말명단」 같은 하위 폴더를 지정하고(다운로드 폴더 자체는 크롬이 막습니다) 「방문할 때마다 허용」을 고르세요. 크롬 설정의 다운로드 위치도 그 폴더로 바꿔 두면 편합니다. <b>파일 수정 허용 창은 절대 허용하지 마세요.</b></li>' +
-      '<li><b>취소 대상 처리</b> — 점검 목록 빨간 구역부터 연락·취소하고 「완료」를 누릅니다.</li>' +
-      '<li><b>확인 필요 처리</b> — 노란 구역을 연락·확인하고, 틀린 내용은 <b>통합예약시스템 관리자 페이지에서 원본을 수정</b>한 뒤 「완료」를 누릅니다(정상이면 「문제없음」). 원본을 고쳐 두면 다음 명단부터 다시 걸리지 않습니다.</li>' +
-      '<li><b>전체 명단</b>에서 반별 전체 신청자를 원본 엑셀 순서로 볼 수 있습니다.</li></ol>' +
-      '<p class="muted small" style="margin:0">다른 선생님이 처리한 내용은 20초 안에 자동으로 반영됩니다. ? 표시에 마우스를 올리면 설명이 나옵니다.</p>' +
-      '<div class="row" style="justify-content:flex-end"><button class="btn primary" data-g="close">확인</button></div></div></div>';
-    document.body.appendChild(wrap);
-    wrap.addEventListener('click', function (e) { if (e.target.closest('[data-g]')) wrap.remove(); });
+  function showGuide() { S.view = 'guide'; render(); window.scrollTo(0, 0); }
+
+  /* ───────── 사용 안내 (시점별) ───────── */
+
+  /** 지금이 한 주 흐름의 어느 단계인지 (수업일·취소 기한·마감 여부로 판단) */
+  function guideStage() {
+    if (!S.date) return 'ready';
+    var now = Core.tsFromMillis(Date.now()).replace('T', ' ').slice(0, 16);
+    if (now.slice(0, 10) === S.date) return 'day';
+    if (now.slice(0, 10) > S.date) return 'after';
+    if (S.data.att) return 'closed';
+    if (now >= cancelDeadline()) return 'late';
+    return 'open';
+  }
+
+  function viewGuide() {
+    var st = guideStage();
+    var rule = ruleText().replace(' 이후 취소', '');
+    var go = function (view, label) { return '<button class="btn sm" data-view="' + view + '">' + label + ' →</button>'; };
+    var stage = function (key, when, title, steps, extra) {
+      var on = st === key;
+      return '<section class="card pad guide-st' + (on ? ' now' : '') + '" id="g-' + key + '"><div class="row between"><div><span class="badge ' + (on ? 'warn' : '') + '">' + esc(when) + '</span> <b style="font-size:17px">' + title + '</b></div>' +
+        (on ? '<b style="color:#B45309">◀ 지금 여기</b>' : '') + '</div><ol class="guide-ol">' + steps.map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ol>' + (extra || '') + '</section>';
+    };
+    var NOW = { open: '접수 기간입니다. 명단을 받아 올리고 점검 목록을 처리하세요.', late: '취소 기한(' + rule + ')이 지났습니다. 기한 후 취소 학생을 등록하고 출석부를 준비하세요.',
+      closed: '출석부를 마감했습니다. 수업 전까지 「변동 사항」만 확인하세요.', day: '오늘이 수업일입니다. 출석부에서 결석을 체크하세요.', after: '수업이 끝났습니다. 결석 기록을 정리하세요.', ready: '설정에서 수업일을 먼저 입력하세요.' };
+    var html = '<section class="card pad row between guide-top"><div><h2 style="margin:0">사용 안내</h2><div class="muted small">한 주 흐름을 시점별로 정리했습니다. 처음 오셨거나 급하게 맡으셨으면 <b>「지금 여기」</b> 표시된 칸부터 하면 됩니다.</div></div>' +
+      '<div class="row"><button class="btn sm" data-x="guide-print">인쇄</button><button class="btn sm primary" data-view="home">홈으로</button></div></section>' +
+      '<section class="card pad" style="border:2px solid #F59E0B;background:#FFFBEB"><b style="font-size:17px">지금 할 일</b> <span class="muted small">(' + esc(md(S.date)) + ' 수업 기준)</span><div style="margin-top:6px">' + esc(NOW[st]) +
+      ' <a href="#g-' + st + '">아래 안내 보기</a></div></section>';
+
+    html += stage('ready', '처음 한 번', '준비', [
+      '<b>로그인</b>: 구글 계정으로 로그인합니다. 「점검자로 등록되어 있지 않습니다」가 나오면, 이미 쓰는 선생님에게 <b>설정 → 점검자</b>에 내 이메일을 넣어 달라고 합니다.',
+      '<b>즐겨찾기 버튼 설치</b>: <a href="https://xleesjx.github.io/excel-down/" target="_blank" rel="noopener">설치 안내 페이지</a>에서 「통합예약 엑셀 일괄 받기」 버튼을 크롬 즐겨찾기바로 끌어다 놓습니다.',
+      '<b>팝업 허용</b>: 처음 창이 열릴 때 크롬이 막으면, 주소창 오른쪽 표시를 눌러 「항상 허용」을 고릅니다.'
+    ]);
+    html += stage('open', '월~목 · 접수 기간', '명단 받기와 점검', [
+      '아침에 이 웹앱 위쪽 <b>[통합예약 관리자 ↗]</b>를 눌러 관리자 화면을 엽니다 (로그인). 두 창이 연결되어 하루 종일 씁니다.',
+      '관리자 <b>통합예약 목록</b> 화면에서 즐겨찾기 버튼 → <b>[○개 점검 웹앱으로 보내기]</b> → 웹앱에 뜬 창에서 회차를 확인하고 <b>[올리기]</b>. 자주 해도 됩니다 (해 둔 작업은 사라지지 않습니다).',
+      '<b>점검 목록</b>의 <span class="badge red">취소 대상</span>(중복·단체·학년·관외·신청 제한)은 보호자에게 연락하고 관리자 화면에서 취소한 뒤 <b>[완료]</b>.',
+      '<span class="badge amber">확인 필요</span>(학교명·학반 오류, 학부모 연락처)는 연락해 확인하고 <b>관리자 화면에서 원본을 고친 뒤</b> [완료]. 정상이면 [문제없음].',
+      '같은 반을 원하는 학생은 <b>전체 명단</b>에서 두 명 이상 체크하고 <b>[🔗 같은 반 요청으로 묶기]</b>.'
+    ], '<div class="row" style="gap:6px">' + go('review', '점검 목록') + go('full', '전체 명단') + '<button class="btn sm" data-act="cms">통합예약 관리자 ↗</button></div>');
+    var dl = cancelDeadline(), wd = '일월화수목금토'.charAt(new Date(dl.slice(0, 10) + 'T00:00:00Z').getUTCDay());
+    html += stage('late', wd + ' ' + esc(dl.slice(11)) + ' 이후 · 취소 기한 뒤', '기한 후 취소 정리', [
+      '명단을 한 번 더 받아 올립니다 (취소 시각이 같이 들어옵니다).',
+      '<b>결석</b> 메뉴의 <b>「기한 후 취소 자동 후보」</b>에서 [등록] 또는 [모두 등록]. 봐 줄 학생은 [제외].',
+      '후보에 없는데 기한 뒤에 취소 연락이 온 학생은 <b>직접 등록</b> 칸에 학생명·학교·학년반만 적고 [모두 등록].'
+    ], '<div class="row" style="gap:6px">' + go('abs', '결석') + '</div>');
+    html += stage('late', '금 오후 · 접수 마감 뒤', '출석부 만들고 최종 마감', [
+      '<b>출석부</b> → [출석부 만들기 시작] → ① 최신 명단 확인 → ② 반 설정(반 이름·교실·교구) → ③ 분반 확인(주황 칸 고치기) → ④ 확인.',
+      '아직 접수 중이면 기다려도 됩니다. <b>마감 전에는 새 명단이 올 때마다 자동으로 다시 분반</b>합니다 (반 설정은 그대로).',
+      '인쇄할 때 <b>[최종 마감]</b>을 누릅니다. 출석부와 <b>연락처 명렬표</b>가 내려받아집니다.',
+      '출석부는 <b>센터 입구·교실 입구·강사</b>용으로 인쇄합니다. 명렬표(연락처·추가대기)는 담당자가 가지고 다닙니다.'
+    ], '<div class="row" style="gap:6px">' + go('att', '출석부') + '</div>');
+    html += stage('closed', '마감 뒤 ~ 수업 날 아침', '바뀐 내용만 반영', [
+      '명단을 다시 올리면 출석부는 <b>자동으로 바뀌지 않고</b>, 출석부 화면 위(홈에도)에 <b>「변동 사항」</b>이 뜹니다.',
+      '예약취소 학생 → 같은 수업 새 학생으로 <b>[교체]</b>, 대신 올 학생이 없으면 <b>[그대로 두기]</b>(강사가 결석 처리) 또는 [출석부에서 빼기].',
+      '새로 승인된 학생 → 빈자리가 있으면 <b>[이 반에 추가]</b>.',
+      '<b>[변경 저장]</b>을 누르면 다음 차수로 저장되고 <b>바뀐 반만</b> 내려받아집니다. 그 장만 다시 인쇄해서 바꿔 붙입니다.'
+    ], '<div class="row" style="gap:6px">' + go('att', '출석부') + '</div>');
+    html += stage('day', '토 · 수업 당일', '출결', [
+      '오지 않은 학생은 <b>출석부</b> 화면에서 학생 옆 <b>[결석]</b>을 체크합니다 (출석부는 그대로, 결석 기록만 남음).',
+      '수업 전에 취소 연락이 오면 [결석] 체크 또는 [취소 처리].'
+    ], '<div class="row" style="gap:6px">' + go('att', '출석부') + '</div>');
+    html += stage('after', '수업 뒤', '결석 정리', [
+      '<b>결석</b> 메뉴에서 사유(질병·대회 등)와 메모를 적습니다.',
+      '봐 줄 학생은 <b>「출석 인정」</b>에 체크합니다. 체크하지 않은 학생은 <b>다음 수업일에 신청 제한</b>으로 자동 표시됩니다.'
+    ], '<div class="row" style="gap:6px">' + go('abs', '결석') + '</div>');
+
+    html += '<section class="card pad"><b style="font-size:17px">문제가 생겼을 때</b><table class="grid" style="margin-top:8px"><tbody>' + [
+      ['화면이 예전 그대로이거나 이상함', '<b>Ctrl + Shift + R</b> (새 버전 불러오기)'],
+      ['「점검자로 등록되어 있지 않습니다」', '다른 점검자에게 <b>설정 → 점검자</b>에 내 이메일 추가 요청'],
+      ['버튼을 눌러도 웹앱 창이 안 열림', '크롬 팝업 차단 → 주소창 오른쪽 표시에서 「항상 허용」'],
+      ['올리기 결과가 「건너뜀」', '접수 기간 밖이거나 이미 더 최근 명단이 올라가 있는 것 (정상)'],
+      ['올리기 결과가 「연결 필요」', '처음 보는 예약명 → 어느 반인지 골라 주면 다음부터 자동'],
+      ['수업일·반·교실·취소 기한을 바꿔야 함', '<b>설정</b> 메뉴에서 고치고 [저장]'],
+      ['관리자 화면 버튼이 안 보임', '<a href="https://xleesjx.github.io/excel-down/" target="_blank" rel="noopener">설치 안내</a>에서 다시 끌어다 놓기 (비상용 버튼도 있음)']
+    ].map(function (r) { return '<tr><td style="width:40%"><b>' + r[0] + '</b></td><td>' + r[1] + '</td></tr>'; }).join('') + '</tbody></table></section>';
+    html += '<section class="card pad small muted" style="line-height:1.8"><b>말 뜻</b><br>· <b>회차</b>: 수업일 한 번 (예: 6회차 = 11/7)<br>· <b>취소 대상 / 확인 필요</b>: 점검 결과 빨강(취소해야 함) / 노랑(연락해서 확인)<br>' +
+      '· <b>최종 마감</b>: 출석부를 인쇄해서 게시한 상태. 이후 바뀌는 것은 사람이 승인해야 반영<br>· <b>차수</b>: 출석부를 저장한 순서 (1차 = 처음 마감, 2차 = 첫 변경)</section>';
+    return html;
   }
 
   /* ───────── 공통: 대화상자 ───────── */
@@ -1771,6 +1840,7 @@
       if (da && confirm(da.name + ' 학생의 결석 기록을 삭제할까요?')) deleteAbs(da);
     }
     else if (x === 'abs-add') absAddManual();
+    else if (x === 'guide-print') window.print();
     else if (x === 'set-add') { var ta = t.getAttribute('data-tab'); setCapture(ta); S.setDraft[ta].push([]); render(); }
     else if (x === 'set-del') { var td = t.getAttribute('data-tab'); setCapture(td); S.setDraft[td].splice(+t.getAttribute('data-r'), 1); render(); }
     else if (x === 'set-reset') { S.setDraft[t.getAttribute('data-tab')] = null; S.setErr[t.getAttribute('data-tab')] = ''; render(); }

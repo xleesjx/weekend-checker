@@ -288,7 +288,8 @@ const server = http.createServer((req, res) => {
   console.log('설정 메뉴: 수업일 고치기·줄 추가·저장, 잘못된 값 안내 확인');
   await page.screenshot({ path: path.join(OUT, '4-settings.png'), fullPage: true });
   await page.click('[data-act=guide]');
-  await page.screenshot({ path: path.join(OUT, '5-guide.png') });
+  await page.waitForSelector('text=지금 할 일');
+  await page.screenshot({ path: path.join(OUT, '5-guide.png'), fullPage: true });
   await browser.close();
   server.close();
   console.log('검색 결과 줄 수:', shown, '/ 페이지 오류:', errors.length ? errors : '없음');

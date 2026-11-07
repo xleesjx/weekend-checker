@@ -220,3 +220,13 @@ tr.cut td { text-decoration: line-through; color: #94A3B8; }
 /* 마감 후 변동 사항 */
 .chg { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .chg select { min-height: 34px; max-width: 320px; }
+
+/* 사용 안내 */
+.guide-st.now { border: 2px solid #F59E0B; }
+.guide-ol { margin: 8px 0; padding-left: 22px; line-height: 1.9; }
+.guide-ol li { margin-bottom: 2px; }
+@media print {
+  header.top, .guide-top .row, #toast, .btn { display: none !important; }
+  .card { break-inside: avoid; box-shadow: none; }
+  body { background: #fff; }
+}
