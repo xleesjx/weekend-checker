@@ -8,7 +8,7 @@ const crypto = require('crypto');
 function makeSheet(name) {
   let data = [];
   const sheet = {
-    name, data: () => data, protections: [],
+    name, data: () => data, protections: [], getName: () => name,
     getDataRange: () => ({ getValues: () => (data.length ? data.map(r => r.slice()) : [['']]) }),
     getRange: (r, c, nr, nc) => {
       nr = nr || 1; nc = nc || 1;
@@ -67,12 +67,17 @@ function createEnv(opts) {
     },
     ContentService: { createTextOutput: (s) => ({ s, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = v; } }) },
-    CacheService: { getScriptCache: () => ({ get: (k) => cache[k] || null, put: (k, v) => { cache[k] = v; } }) },
+    CacheService: { getScriptCache: () => ({ get: (k) => (k in cache ? cache[k] : null), put: (k, v) => { cache[k] = v; }, remove: (k) => { delete cache[k]; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
     Utilities: {
       DigestAlgorithm: { SHA_256: 'sha256' },
       computeDigest: (alg, s) => Array.from(crypto.createHash('sha256').update(s).digest()),
       base64EncodeWebSafe: (b) => Buffer.from(b).toString('base64url'),
+      base64Encode: (b) => Buffer.from(b).toString('base64'),
+      base64Decode: (s) => Array.from(Buffer.from(s, 'base64')),
+      newBlob: (data) => { const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data); return { getBytes: () => Array.from(buf), getDataAsString: () => buf.toString('utf8'), _buf: buf }; },
+      gzip: (blob) => { const z = require('zlib').gzipSync(blob._buf); return { getBytes: () => Array.from(z), _buf: z }; },
+      ungzip: (blob) => { const u = require('zlib').gunzipSync(blob._buf); return { getBytes: () => Array.from(u), getDataAsString: () => u.toString('utf8'), _buf: u }; },
       formatDate: (d, tz, fmt) => {
         const k = new Date(d.getTime() + 9 * 3600000);
         const y = k.getUTCFullYear(), M = pad(k.getUTCMonth() + 1), D = pad(k.getUTCDate());
@@ -91,6 +96,20 @@ function createEnv(opts) {
     },
     Session: { getEffectiveUser: () => ({ getEmail: () => 'owner@example.com' }) }
   };
+  // 선택: Sheets API(고급 서비스) 흉내 — 여러 탭을 한 번에 읽기
+  const stats = { batchGets: 0, batchCells: 0 };
+  if (opts.sheetsApi) {
+    ss.getId = () => 'TESTID';
+    ctx.Sheets = { Spreadsheets: { Values: { batchGet: (id, o) => {
+      stats.batchGets++;
+      return { valueRanges: o.ranges.map((r) => {
+        const n = r.replace(/^'|'$/g, '').replace(/''/g, "'"); const sh = sheets[n];
+        const values = sh ? sh.data().map((row) => row.map((v) => (v === null || v === undefined ? '' : String(v)))) : [];
+        stats.batchCells += values.reduce((a, row) => a + row.length, 0);
+        return { values };
+      }) };
+    } } } };
+  }
   // 테스트용 시계
   const RealDate = Date;
   class FakeDate extends RealDate { constructor(...a) { if (a.length) super(...a); else super(now.getTime()); } static now() { return RealDate.now(); } }
@@ -101,7 +120,7 @@ function createEnv(opts) {
   vm.runInContext(fs.readFileSync(path.join(root, 'gas/Code.gs'), 'utf8'), ctx, { filename: 'Code.gs' });
   vm.runInContext(fs.readFileSync(path.join(root, 'gas/Core.gs'), 'utf8'), ctx, { filename: 'Core.gs' });
   return {
-    ctx, sheets, props, topic,
+    ctx, sheets, props, topic, stats, cache,
     setNow: (d) => { now = d; },
     call: (action, payload, email) => {
       const out = ctx.doPost({ postData: { contents: JSON.stringify(Object.assign({ action, token: 'tok:' + (email || 'owner@example.com') }, payload || {})) } });

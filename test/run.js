@@ -70,7 +70,7 @@ function codes(row) { return row.issues.map((i) => i.code).sort().join(','); }
 })();
 
 /* 2. 서버 흐름 */
-const env = createEnv({ now: new Date('2026-11-04T10:00:00+09:00') });
+const env = createEnv({ now: new Date('2026-11-04T10:00:00+09:00'), sheetsApi: !!process.env.SHEETS_API });
 env.ctx.setupSheets();
 env.props.REV = '1';
 // 학교 목록 (가짜)

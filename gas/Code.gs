@@ -53,6 +53,9 @@ function doPost(e) {
   init_();
   try {
     var req = JSON.parse(e.postData.contents);
+    TBL_ = {};
+    // state는 기억해 둔 결과를 쓸 수 있으면 아예 읽지 않으므로 API.state 안에서 필요할 때만 미리 읽기
+    if (req.action !== 'rev' && req.action !== 'state') prefetch_(prefetchFor_(req.action));
     var user = authenticate_(req.token);
     var fn = API[req.action];
     if (!fn) throw apiError_('BAD_ACTION', '알 수 없는 요청입니다.');
@@ -120,13 +123,97 @@ function cellText_(v) {
   return v === null || v === undefined ? '' : String(v).trim();
 }
 
-function readTable_(name) {
-  var sh = sheet_(name);
-  var values = sh.getDataRange().getValues();
+/* ───────── 빠르게 읽기 ─────────
+ * TBL_: 요청 하나 동안 읽은 탭 (같은 탭을 두 번 읽지 않음, 쓰면 바로 갱신)
+ * 설정 탭(STATIC_TABS_)은 CacheService에 10분 기억 — 웹앱에서 쓰거나 시트에서 직접 고치면(onEdit) 바로 지움
+ * prefetch_: 필요한 탭을 Sheets API 한 번으로 읽음 (편집기 「서비스」에 Google Sheets API가 없으면 예전처럼 하나씩)
+ */
+var TBL_ = {};
+var CACHE_TTL_ = 600;
+function staticTabs_() { return [SHEET.USERS, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.RESTRICT]; }
+function cacheKey_(name) { return 'T:' + name; }
+
+function tableFromValues_(name, values) {
   var header = values.length ? values[0].map(cellText_) : (HEADERS[name] || []);
-  var rows = values.slice(1).map(function (r) { return r.map(cellText_); })
-    .filter(function (r) { return r.some(function (c) { return c !== ''; }); });
+  var w = Math.max(header.length, (HEADERS[name] || []).length);
+  var rows = values.slice(1).map(function (r) {
+    var o = r.map(cellText_);
+    while (o.length < w) o.push('');
+    return o;
+  }).filter(function (r) { return r.some(function (c) { return c !== ''; }); });
   return { header: header, rows: rows };
+}
+
+function copyTable_(t) { return { header: t.header.slice(), rows: t.rows.map(function (r) { return r.slice(); }) }; }
+
+function remember_(name, t) {
+  TBL_[name] = copyTable_(t);
+  if (staticTabs_().indexOf(name) >= 0) {
+    try { var js = JSON.stringify(t); if (js.length < 90000) CacheService.getScriptCache().put(cacheKey_(name), js, CACHE_TTL_); } catch (e) { /* 너무 크면 기억 안 함 */ }
+  }
+}
+
+/** 무엇이든 쓰면 기억해 둔 계산 결과를 못 쓰게 (세대 번호를 올림) */
+function cacheGen_() { try { return CacheService.getScriptCache().get('GEN') || '0'; } catch (e) { return '0'; } }
+function forget_(name) {
+  delete TBL_[name];
+  try { CacheService.getScriptCache().put('GEN', String(Date.now()), 21600); } catch (e) { /* 무시 */ }
+  if (staticTabs_().indexOf(name) >= 0) { try { CacheService.getScriptCache().remove(cacheKey_(name)); } catch (e) { /* 무시 */ } }
+}
+
+function readTable_(name) {
+  if (TBL_[name]) return copyTable_(TBL_[name]);
+  if (staticTabs_().indexOf(name) >= 0) {
+    try {
+      var c = CacheService.getScriptCache().get(cacheKey_(name));
+      if (c) { TBL_[name] = JSON.parse(c); return copyTable_(TBL_[name]); }
+    } catch (e) { /* 다시 읽기 */ }
+  }
+  var t = tableFromValues_(name, sheet_(name).getDataRange().getValues());
+  remember_(name, t);
+  return copyTable_(t);
+}
+
+/** 여러 탭을 한 번에 읽어 둡니다 (Sheets API). 안 되면 아무 일도 하지 않고, 읽을 때 하나씩 읽습니다. */
+function prefetch_(names) {
+  if (typeof Sheets === 'undefined' || !Sheets.Spreadsheets || !Sheets.Spreadsheets.Values) return;
+  var cache = null;
+  try { cache = CacheService.getScriptCache(); } catch (e) { cache = null; }
+  var need = names.filter(function (n) { return !TBL_[n] && !(cache && staticTabs_().indexOf(n) >= 0 && cache.get(cacheKey_(n))); });
+  if (!need.length) return;
+  try {
+    var exist = {};
+    ss_().getSheets().forEach(function (sh) { exist[sh.getName()] = true; });
+    need = need.filter(function (n) { return exist[n]; });
+    if (!need.length) return;
+    var res = Sheets.Spreadsheets.Values.batchGet(ss_().getId(), {
+      ranges: need.map(function (n) { return "'" + n.replace(/'/g, "''") + "'"; }), valueRenderOption: 'FORMATTED_VALUE', majorDimension: 'ROWS'
+    });
+    (res.valueRanges || []).forEach(function (vr, i) { remember_(need[i], tableFromValues_(need[i], vr.values || [])); });
+  } catch (e) { /* 하나씩 읽기로 */ }
+}
+
+/** 요청마다 미리 읽을 탭 */
+function prefetchFor_(action) {
+  var cfg = [SHEET.USERS, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.RESTRICT, SHEET.ABS];
+  var map = {
+    state: cfg.concat([SHEET.LIST, SHEET.STATUS, SHEET.UPLOADS, SHEET.ATT, SHEET.LINKS, SHEET.MARKS, SHEET.WAIT]),
+    status: cfg.concat([SHEET.LIST, SHEET.STATUS, SHEET.UPLOADS]),
+    upload: cfg.concat([SHEET.LIST, SHEET.STATUS, SHEET.UPLOADS]),
+    settings: cfg.concat([SHEET.SETLOG]),
+    settingsSave: cfg
+  };
+  return map[action] || [SHEET.USERS];
+}
+
+/** 시트를 직접 고치면(편집기·시트 화면) 기억해 둔 설정을 지우고 웹앱이 새로 불러오게 합니다 (단순 트리거) */
+function onEdit(e) {
+  try {
+    var name = e && e.range ? e.range.getSheet().getName() : '';
+    init_();
+    if (name) forget_(name);
+    bumpRev_();
+  } catch (err) { /* 무시 */ }
 }
 
 /** 수식으로 해석될 수 있는 값은 글자로 저장 (수식 삽입 방지) */
@@ -148,6 +235,9 @@ function writeTable_(name, rows) {
   var rg = sh.getRange(1, 1, all.length, header.length);
   rg.setNumberFormat('@');
   rg.setValues(all);
+  // 이번 요청 안에서는 방금 쓴 내용을 그대로 기억 (다시 읽지 않음), 설정 탭은 서버 기억을 지움
+  forget_(name);
+  TBL_[name] = { header: header.slice(), rows: rows.map(function (r) { var o = []; for (var i = 0; i < header.length; i++) o.push(r[i] === undefined || r[i] === null ? '' : String(r[i])); return o; }) };
 }
 
 function appendRows_(name, rows) {
@@ -159,13 +249,14 @@ function appendRows_(name, rows) {
   var rg = sh.getRange(start, 1, data.length, header.length);
   rg.setNumberFormat('@');
   rg.setValues(data);
+  forget_(name);
 }
 
 /* ───────── 설정 읽기 ───────── */
 
 function parseSheetDate_(s, year) {
   var t = Core.str(s);
-  var m = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/.exec(t);
+  var m = /^(\d{4})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})/.exec(t);
   if (m) return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
   m = /^(\d{1,2})\s*[/.\-월]\s*(\d{1,2})/.exec(t);
   if (m && year) return year + '-' + ('0' + m[1]).slice(-2) + '-' + ('0' + m[2]).slice(-2);
@@ -306,6 +397,32 @@ API.rev = function () {
 };
 
 API.state = function (req, user) {
+  var rev0 = API.rev().rev, key = 'S:' + (req.date || '') + ':' + rev0 + ':' + cacheGen_() + ':' + today_();
+  var hit = stateCacheGet_(key);
+  if (hit) { hit.user = user; return hit; }
+  prefetch_(prefetchFor_('state'));
+  var res = stateBuild_(req, user);
+  if (API.rev().rev === rev0) stateCachePut_(key, res);
+  return res;
+};
+
+function stateCacheGet_(key) {
+  try {
+    var c = CacheService.getScriptCache().get(key);
+    if (!c) return null;
+    return JSON.parse(Utilities.ungzip(Utilities.newBlob(Utilities.base64Decode(c), 'application/x-gzip')).getDataAsString());
+  } catch (e) { return null; }
+}
+
+function stateCachePut_(key, res) {
+  try {
+    var copy = {}; Object.keys(res).forEach(function (k) { if (k !== 'user') copy[k] = res[k]; });
+    var z = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(JSON.stringify(copy), 'application/json')).getBytes());
+    if (z.length < 95000) CacheService.getScriptCache().put(key, z, CACHE_TTL_);
+  } catch (e) { /* 기억 못 해도 괜찮음 */ }
+}
+
+function stateBuild_(req, user) {
   var ctx = loadCtx_();
   var date = req.date || Core.currentRound(ctx.dates, today_());
   var list = readTable_(SHEET.LIST).rows;
@@ -384,16 +501,15 @@ API.linkAdd = function (req, user) {
     appendRows_(SHEET.LINKS, members.map(function (m) {
       return [id, req.date, req.scope === 'keep' ? '계속' : '이번', Core.str(m.no), Core.str(m.name), Core.str(m.school), Core.str(req.memo), user.name, at];
     }));
-    bumpRev_();
-    return { id: id };
+    var group = readLinks_().filter(function (g) { return g.id === id; })[0] || null;
+    return { id: id, group: group, rev: bumpRev_() };
   });
 };
 
 API.linkRemove = function (req) {
   return withLock_(function () {
     writeTable_(SHEET.LINKS, readTable_(SHEET.LINKS).rows.filter(function (r) { return r[0] !== req.id; }));
-    bumpRev_();
-    return {};
+    return { rev: bumpRev_() };
   });
 };
 
@@ -715,8 +831,7 @@ API.status = function (req, user) {
     writeTable_(SHEET.STATUS, rows);
     var statuses2 = readStatuses_();
     refreshSheetView_(ctx, date, list, statuses2, readTable_(SHEET.UPLOADS).rows);
-    bumpRev_();
-    return { status: req.status ? { s: req.status, who: user.name, at: at, memo: Core.str(req.memo) } : null };
+    return { status: req.status ? { s: req.status, who: user.name, at: at, memo: Core.str(req.memo) } : null, fp: target.fp, rev: bumpRev_() };
   });
 };
 

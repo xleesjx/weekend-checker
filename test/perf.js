@@ -13,7 +13,8 @@ const Core = require('../docs/core.js');
 
 const OUT = process.argv[2] || path.join(__dirname, 'shots-perf');
 fs.mkdirSync(OUT, { recursive: true });
-const env = createEnv({ now: new Date('2026-11-06T15:00:00+09:00') });
+const SHEETS = process.env.NO_SHEETS_API ? false : true;  // 기본: Google Sheets API(한 번에 읽기) 켬
+const env = createEnv({ now: new Date('2026-11-06T15:00:00+09:00'), sheetsApi: SHEETS });
 env.ctx.setupSheets();
 env.ctx.writeTable_('점검자', [['owner@example.com', '이승주'], ['kim@example.com', '김선생']]);
 
@@ -69,28 +70,36 @@ env.ctx.SpreadsheetApp.getActiveSpreadsheet = () => ({
     if (!sh) return sh;
     return { ...sh, getDataRange: () => { const v = sh.getDataRange().getValues(); reads.push({ n, cells: v.length * (v[0] || []).length }); return { getValues: () => v }; } };
   },
-  insertSheet: realSS.insertSheet
+  insertSheet: realSS.insertSheet,
+  getId: realSS.getId,
+  getSheets: realSS.getSheets
 });
 const TARGET = '2026-11-07';
 function measure(action, payload) {
   reads = [];
+  const b0 = env.stats.batchGets, c0 = env.stats.batchCells;
   const t0 = process.hrtime.bigint();
   const res = env.call(action, payload);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  const cells = reads.reduce((a, r) => a + r.cells, 0);
+  const cells = reads.reduce((a, r) => a + r.cells, 0) + (env.stats.batchCells - c0);
   const by = {};
   reads.forEach((r) => { by[r.n] = (by[r.n] || 0) + 1; });
-  return { ms, reads: reads.length, cells, by, bytes: JSON.stringify(res).length, ok: res.ok !== false && !res.error, res };
+  return { ms, reads: reads.length, batch: env.stats.batchGets - b0, cells, by, bytes: JSON.stringify(res).length, ok: res.ok !== false && !res.error, res };
 }
-env.call('state', { date: TARGET });
+env.call('rev', {});
 const S1 = measure('state', { date: TARGET });
-const S2 = measure('status', { date: TARGET, no: list.find((r) => r[14] === TARGET)[0], status: 'done', memo: '', prevAt: '' });
+const S1b = measure('state', { date: TARGET });
+const S2 = measure('status', { date: TARGET, no: list.find((r) => r[14] === TARGET && !statuses.some((x) => x[1] === r[0]))[0], status: 'done', memo: '', prevAt: '' });
+const S1c = measure('state', { date: TARGET });
 const S3 = measure('settings', {});
 // Apps Script 추정: 시트 읽기 한 번 ≈ 0.1~0.2초 + 칸 5만 개당 ≈ 0.5~1초 + 계산은 이 PC의 약 3~5배
-const est = (m) => [0.1 * m.reads + m.cells / 100000 + m.ms * 3 / 1000, 0.2 * m.reads + m.cells / 50000 + m.ms * 5 / 1000].map((x) => x.toFixed(1));
+// 한 번에 읽기(batchGet) 한 번 ≈ 0.3~0.6초 + 칸 수 비례
+// 요청마다 기본으로 드는 시간(Apps Script 시작·로그인 확인) ≈ 0.4~0.8초를 더함
+const est = (m) => [0.4 + 0.1 * m.reads + 0.3 * m.batch + m.cells / 100000 + m.ms * 3 / 1000, 0.8 + 0.2 * m.reads + 0.6 * m.batch + m.cells / 50000 + m.ms * 5 / 1000].map((x) => x.toFixed(1));
 console.log('자료: 통합명단 ' + list.length + '줄 · 처리기록 ' + statuses.length + ' · 결석 ' + absences.length + ' · 출석부 저장본 ' + att.length + '개 · 이번 회차 ' + list.filter((r) => r[14] === TARGET).length + '명');
-[['처음 열기·새로고침 (state)', S1], ['[완료] 누르기 (status)', S2], ['설정 메뉴 (settings)', S3]].forEach(([k, m]) => {
-  console.log(k + ': 시트 읽기 ' + m.reads + '번 · ' + m.cells.toLocaleString() + '칸 · 이 PC 계산 ' + m.ms.toFixed(0) + 'ms · 응답 ' + Math.round(m.bytes / 1024) + 'KB → Apps Script 추정 ' + est(m).join('~') + '초');
+console.log('Sheets API(한 번에 읽기): ' + (SHEETS ? '켬' : '끔'));
+[['처음 열기 (state, 서버 기억 없음)', S1], ['다시 열기·다른 선생님 (state, 바뀐 것 없음)', S1b], ['[완료] 누르기 (status, 뒤에서 저장)', S2], ['[완료] 뒤 다른 선생님 새로 받기 (state)', S1c], ['설정 메뉴 (settings)', S3]].forEach(([k, m]) => {
+  console.log(k + ': 따로 읽기 ' + m.reads + '번 · 한 번에 읽기 ' + m.batch + '번 · ' + m.cells.toLocaleString() + '칸 · 이 PC 계산 ' + m.ms.toFixed(0) + 'ms · 응답 ' + Math.round(m.bytes / 1024) + 'KB → Apps Script 추정 ' + est(m).join('~') + '초');
   console.log('   읽은 탭: ' + Object.entries(m.by).map(([n, c]) => n + (c > 1 ? '×' + c : '')).join(', '));
 });
 

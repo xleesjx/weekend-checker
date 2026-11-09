@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '33';
+  var APP_VERSION = '34';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -143,6 +143,8 @@
     setBusy(true);
     return api('state', { date: date }).then(function (res) {
       if (S.date !== res.date) { S.att = null; S.sel = {}; }
+      // 무엇이 바뀌었으면 설정 화면도 다음에 새로 받기 (고치던 표가 있으면 그대로 둠)
+      if (S.rev && res.rev !== S.rev && !Object.keys(S.setDraft || {}).some(function (k) { return S.setDraft[k]; })) S.settings = null;
       S.data = res; S.date = res.date; S.rev = res.rev; S.user = res.user || S.user;
       S.loadedAt = new Date();
       draftRefresh();
@@ -152,7 +154,7 @@
   }
 
   function poll() {
-    if (S.busy || S.absPending || !S.token || document.visibilityState !== 'visible' || document.querySelector('.modal-bg')) return;
+    if (S.busy || S.absPending || S.stPending || !S.token || document.visibilityState !== 'visible' || document.querySelector('.modal-bg')) return;
     // 메모를 쓰는 중이면 화면을 다시 그리지 않습니다
     var typing = Array.prototype.some.call(document.querySelectorAll('input.memo'), function (m) { return m.value || m === document.activeElement; });
     var ae = document.activeElement;
@@ -394,16 +396,33 @@
 
   /* ───────── 처리 버튼 ───────── */
 
+  /*
+   * [완료]·[문제없음]·[되돌리기]: 화면을 바로 바꾸고 구글 시트 저장은 뒤에서 차례로 (전체를 다시 받지 않음)
+   * 다른 선생님이 먼저 처리했으면(서버가 알려 줌) 그때만 새로 불러옵니다.
+   */
+  var stQ = Promise.resolve();
+  S.stPending = 0;
+  S.srvAt = {};
   function setStatus(no, status, memo) {
-    if (S.busy) return;
     var r = rowByNo(no);
     if (!r) return;
     memo = memo || '';
-    setBusy(true);
-    api('status', { date: S.date, no: no, status: status, memo: memo, prevAt: r.status ? r.status.at : '' })
-      .then(function (res) { if (res.conflict) toast(res.message); else S.open = null; })
-      .catch(function (e) { toast(e.message); })
-      .then(function () { setBusy(false); return load(S.date); });
+    if (S.srvAt[no] === undefined) S.srvAt[no] = r.status ? r.status.at : '';
+    r.status = status ? { s: status, who: (S.user && S.user.name) || '', at: nowKst() + ':00', memo: memo, pending: true } : null;
+    r.changed = false;
+    S.open = null;
+    render();
+    S.stPending++;
+    stQ = stQ.then(function () {
+      return api('status', { date: S.date, no: no, status: status, memo: memo, prevAt: S.srvAt[no] }).then(function (res) {
+        if (res.conflict) { toast(res.message, 5000); delete S.srvAt[no]; return load(S.date); }
+        S.srvAt[no] = res.status ? res.status.at : '';
+        var cur = rowByNo(no);
+        if (cur && cur.status && cur.status.pending && res.status && cur.status.s === res.status.s) cur.status = res.status;
+        if (res.rev && S.stPending === 1) S.rev = res.rev;
+      });
+    }).catch(function (e) { toast('처리 상태를 저장하지 못했습니다: ' + e.message + ' — 새로 불러옵니다.', 5000); delete S.srvAt[no]; return load(S.date); })
+      .then(function () { S.stPending = Math.max(0, S.stPending - 1); if (!S.stPending) S.srvAt = {}; });
   }
 
   /* ───────── 화면 ───────── */
@@ -1011,7 +1030,10 @@
       var scope = w.querySelector('input[name=lscope]:checked').value;
       setBusy(true);
       api('linkAdd', { date: S.date, scope: scope, memo: w.querySelector('#lmemo').value, members: members })
-        .then(function () { close(); S.sel = {}; toast('같은 반 요청을 저장했습니다.'); return load(S.date); })
+        .then(function (res) {
+          close(); S.sel = {}; toast('같은 반 요청을 저장했습니다.');
+          if (res.group) { S.data.links = (S.data.links || []).concat([res.group]); if (res.rev) S.rev = res.rev; render(); } else return load(S.date);
+        })
         .catch(function (er) { toast(er.message); }).then(function () { setBusy(false); });
     });
   }
@@ -1029,7 +1051,13 @@
     modal(html, function (m, b, w, close) {
       if (m === 'close') return close();
       if (m === 'rm' && confirm('이 같은 반 요청을 해제할까요?')) {
-        api('linkRemove', { id: b.getAttribute('data-id') }).then(function () { close(); toast('해제했습니다.'); return load(S.date); }).catch(function (er) { toast(er.message); });
+        var lid = b.getAttribute('data-id');
+        api('linkRemove', { id: lid }).then(function (res) {
+          close(); toast('해제했습니다.');
+          S.data.links = (S.data.links || []).filter(function (g) { return g.id !== lid; });
+          if (res.rev) S.rev = res.rev;
+          render();
+        }).catch(function (er) { toast(er.message); });
       }
     });
   }
@@ -2190,7 +2218,7 @@
     if (!t) return;
     if (t.hasAttribute('data-x')) return extraClick(t, e);
     if (t.hasAttribute('data-keepabs')) return toggleAbsence(t.getAttribute('data-keepabs'));
-    if (t.hasAttribute('data-view')) { S.view = t.getAttribute('data-view'); if (S.view === 'settings') S.settings = null; render(); window.scrollTo(0, 0); return; }
+    if (t.hasAttribute('data-view')) { S.view = t.getAttribute('data-view'); render(); window.scrollTo(0, 0); return; }
     if (t.hasAttribute('data-sort')) {
       var col = t.getAttribute('data-sort');
       if (S.sort.col !== col) S.sort = { col: col, dir: 1 };

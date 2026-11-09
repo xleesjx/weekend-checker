@@ -10,7 +10,7 @@ const { files, toXls, parseXls } = require('./fake-data');
 const OUT = process.argv[2] || path.join(__dirname, 'shots');
 fs.mkdirSync(OUT, { recursive: true });
 
-const env = createEnv({ now: new Date('2026-11-04T10:00:00+09:00') });
+const env = createEnv({ now: new Date('2026-11-04T10:00:00+09:00'), sheetsApi: !!process.env.SHEETS_API });
 env.ctx.setupSheets();
 env.ctx.writeTable_('설정_학교', [['가온초등학교', '초'], ['해솔초등학교', '초'], ['새솔초등학교', '초'], ['다솜초등학교', '초'], ['누리중학교', '중']]);
 env.ctx.writeTable_('신청제한', [['2026-10-31', '정우진', '다솜초', '결석', '', '', '관리자'], ['2026-10-31', '학생03', '다솜초', '기한 후 취소', '', '', '관리자']]);
@@ -56,9 +56,11 @@ const server = http.createServer((req, res) => {
     sessionStorage.setItem('idtoken', tok); localStorage.setItem('guide-v1', '1'); localStorage.setItem('guide-v2', '1');
   }, { tok: 'x.' + payload + '.y', now: new Date('2026-11-06T15:00:00+09:00').getTime() });
   await page.route('https://accounts.google.com/**', (r) => r.fulfill({ body: 'window.google={accounts:{id:{initialize(){},renderButton(){},prompt(){}}}};', contentType: 'text/javascript' }));
+  const calls = {};
   await page.route('https://api.test/**', async (route) => {
     const body = JSON.parse(route.request().postData());
     delete body.token;
+    calls[body.action] = (calls[body.action] || 0) + 1;
     const out = env.call(body.action, body);
     await route.fulfill({ body: JSON.stringify(out), contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' } });
   });
@@ -86,8 +88,16 @@ const server = http.createServer((req, res) => {
   await page.screenshot({ path: path.join(OUT, '2-review.png'), fullPage: true });
   const memoBox = page.locator('[data-done="251210"]:visible').locator('xpath=..').locator('.memo');
   await memoBox.fill('통화함');
+  const stateBefore = calls.state || 0;
+  const tClick = Date.now();
   await page.locator('[data-done="251210"]:visible').click();
   await page.waitForFunction(() => !document.querySelector('[data-done="251210"]'));
+  const tShown = Date.now() - tClick;
+  for (let k = 0; k < 30 && !env.ctx.readTable_('처리기록').rows.some((r) => r[1] === '251210'); k++) await page.waitForTimeout(100);
+  if (!env.ctx.readTable_('처리기록').rows.some((r) => r[1] === '251210' && r[5] === '통화함')) throw new Error('[완료]가 시트에 저장되지 않음');
+  await page.waitForTimeout(500);
+  if ((calls.state || 0) !== stateBefore) throw new Error('[완료] 뒤에 전체를 다시 받음');
+  console.log('[완료]: 화면 바로 바뀜(' + tShown + 'ms) · 시트 저장 · 전체 다시 받기 없음');
   const memoSaved = await page.evaluate(() => document.body.textContent.includes('통화함'));
   if (!memoSaved) throw new Error('메모가 저장되지 않음');
   await page.click('[data-view=full]');
