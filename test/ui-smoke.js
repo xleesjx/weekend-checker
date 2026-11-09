@@ -63,7 +63,7 @@ const server = http.createServer((req, res) => {
     await route.fulfill({ body: JSON.stringify(out), contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' } });
   });
   await page.goto('http://localhost:' + port + '/');
-  await page.waitForSelector('.steps', { timeout: 8000 }).catch(async (e) => { console.log(await page.content()); throw e; });
+  await page.waitForSelector('.flowbar', { timeout: 8000 }).catch(async (e) => { console.log(await page.content()); throw e; });
   await page.screenshot({ path: path.join(OUT, '1-home.png'), fullPage: true });
   // 시각 없는 이름의 파일을 직접 올리기 (파일 선택 창 대신)
   const xbuf = toXls(files.explore.rows.slice(0, 3));
@@ -213,6 +213,7 @@ const server = http.createServer((req, res) => {
   await page.waitForSelector('[data-x=att-print][data-what=changed][disabled]');
   console.log('웹앱 인쇄: 전체 인쇄 → 인쇄한 반 기록, 아직 인쇄 안 한 반 0');
   // 엑셀·명렬표도 내려받기 가능
+  await page.click('details.more summary');
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-redl]')]);
   await dl.saveAs(path.join(OUT, 'att1.xlsx'));
   const [dlc] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-contacts]')]);
@@ -249,8 +250,24 @@ const server = http.createServer((req, res) => {
   if (!/^★/.test(optFirst)) throw new Error('참석 확정 대기자가 교체 후보 맨 위가 아님: ' + optFirst);
   await page.selectOption('[id^=rep-]', '260100');
   await page.click('[data-x=chg-replace]');
+  // 저장 전에 다른 점검자가 먼저 저장하면: 내 변경을 말없이 지우지 않고 알림
+  {
+    const la = lastAtt();
+    const other = env.call('attSave', { date: '2026-11-07', data: la.data, baseVersion: la.v });
+    if (!other.version) throw new Error('다른 점검자 저장 흉내 실패');
+    await page.click('[data-act=refresh]');
+    await page.waitForSelector('text=먼저 저장했습니다');
+    if (!(await page.$('[data-x=att-save2][disabled]'))) throw new Error('먼저 저장된 뒤에도 저장 버튼이 눌림');
+    const kept = await page.$$eval('.xls td', (tds) => tds.some((td) => td.textContent === '새학생'));
+    if (!kept) throw new Error('저장 안 한 내 변경이 말없이 사라짐');
+    await page.click('[data-x=att-reload]');
+    await page.waitForSelector('text=변동 사항 2건');
+    console.log('다른 점검자가 먼저 저장: 내 변경 유지 + 안내 → 새로 불러오기 확인');
+    await page.selectOption('[id^=rep-]', '260100');
+    await page.click('[data-x=chg-replace]');
+  }
   await page.click('[data-x=att-save2]');
-  await page.waitForFunction(() => /3차로 저장/.test(document.getElementById('toast').textContent));
+  await page.waitForFunction(() => /\d차로 저장/.test(document.getElementById('toast').textContent));
   {
     const d3 = lastAtt().data;
     const allNames = d3.blocks.flatMap((b) => b.students.filter((x) => x.status !== '취소').map((x) => x.name));
@@ -259,6 +276,7 @@ const server = http.createServer((req, res) => {
   }
   await page.waitForSelector('[data-x=att-print][data-what=changed]:not([disabled])');
   const upLabel = await page.textContent('[data-x=att-print][data-what=changed]');
+  if (!/바뀐 반 인쇄/.test(upLabel)) throw new Error('바뀐 반 인쇄 버튼: ' + upLabel);
   if (!/\(1\)/.test(upLabel)) throw new Error('아직 인쇄 안 한 바뀐 반: ' + upLabel);
   await page.click('[data-x=att-print][data-what=changed]');
   await page.waitForSelector('[data-x=att-print][data-what=changed][disabled]');
@@ -268,7 +286,7 @@ const server = http.createServer((req, res) => {
   if (conflict.code !== 'CONFLICT') throw new Error('차수 충돌을 막지 않음');
   await page.click('[data-x=att-cancel][data-i="0"]');
   await page.click('[data-x=att-save2]');
-  await page.waitForFunction(() => /4차로 저장/.test(document.getElementById('toast').textContent));
+  await page.waitForFunction(() => /\d차로 저장/.test(document.getElementById('toast').textContent) && !document.querySelector('[data-x=att-save2]:not([disabled])'));
   // 당일 결석 체크
   await page.check('[data-xc=att-absent][data-i="1"][data-j="0"]');
   await page.waitForSelector('.abs-chk.on');
@@ -282,6 +300,7 @@ const server = http.createServer((req, res) => {
   await page.screenshot({ path: path.join(OUT, '6b-abs-after.png'), fullPage: true });
   await page.click('[data-view=att]');
   // 처음부터 다시 만들기: 미리보기 → 다시 시작해도 반 설정(이름·교실·교구)은 이어짐
+  await page.click('details.more summary');
   await page.click('[data-x=att-rebuild]');
   await page.waitForSelector('[data-x=att-start-work]');
   await page.click('[data-x=att-start-work]');

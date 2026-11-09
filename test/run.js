@@ -243,6 +243,14 @@ ok(tp.ok && tp.items.length === 1 && tp.items[0].cls === '기초1' && /로비코
   const v = env.call('attSave', { date: '2026-11-14', data: { blocks: [{ key: 'a#0', students: [] }] }, baseVersion: 0 }).version;
   env.call('attPrinted', { date: '2026-11-14', version: v, keys: ['a#0'] });
   ok(env.call('state', { date: '2026-11-14' }).att.data.printed['a#0'] === v, '인쇄한 반 기록');
+  env.call('mark', { date: '2026-11-07', kind: 'skip', no: '251131', on: true });
+  env.call('mark', { date: '2026-11-07', kind: 'keep', no: '251178', on: true });
+  let mk = env.call('state', { date: '2026-11-07' }).marks;
+  ok(mk.length === 2 && mk.some((m) => m.kind === 'skip' && m.no === '251131'), '확인 표시 공유 저장 (제외·그대로 두기)');
+  env.call('mark', { date: '2026-11-07', kind: 'skip', no: '*', on: false });
+  mk = env.call('state', { date: '2026-11-07' }).marks;
+  ok(mk.length === 1 && mk[0].kind === 'keep', '제외 모두 되돌리기');
+  ok(env.call('mark', { date: '2026-11-07', kind: 'zzz', no: '1', on: true }).code === 'BAD', '잘못된 표시 거부');
 })();
 
 console.log('테스트 ' + passed + '개 통과');

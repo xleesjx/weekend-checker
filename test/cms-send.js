@@ -170,6 +170,8 @@ const server = http.createServer((req, res) => {
   await app.screenshot({ path: path.join(OUT, '6-late.png'), fullPage: true });
   await app.click('[data-x=late-skip]');
   await app.waitForSelector('text=기한 후 취소 자동 후보 1명');
+  for (let k = 0; k < 30 && !env.ctx.readTable_('확인표시').rows.length; k++) await app.waitForTimeout(100);
+  if (!env.ctx.readTable_('확인표시').rows.some((r) => r[1] === 'skip')) throw new Error('[제외]가 공유 저장되지 않음');
   await app.click('[data-x=late-unskip]');
   await app.click('[data-x=late-all]');
   await app.waitForSelector('text=기한 후 취소 자동 후보 0명');
