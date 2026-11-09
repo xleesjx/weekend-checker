@@ -46,9 +46,15 @@ const server = http.createServer((req, res) => {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: +(process.env.VW || 1360), height: +(process.env.VH || 900) } });
   const errors = [];
-  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('pageerror', (e) => { errors.push(e.message); if (process.env.DEBUG_ERR) console.log('PAGE ERROR:', e.message, e.stack); });
   const payload = Buffer.from(JSON.stringify({ email: 'owner@example.com', name: '이승주', exp: Math.floor(Date.now() / 1000) + 3000 })).toString('base64url');
-  await page.addInitScript((tok) => { sessionStorage.setItem('idtoken', tok); localStorage.setItem('guide-v1', '1'); }, 'x.' + payload + '.y');
+  // 브라우저 시계를 11/6(금) 15:00으로 고정 (11/7 수업 접수 기간 안, 출석부 작업일)
+  await page.addInitScript(({ tok, now }) => {
+    const RealDate = Date; const off = now - RealDate.now();
+    // eslint-disable-next-line no-global-assign
+    Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [RealDate.now() + off])); } static now() { return RealDate.now() + off; } };
+    sessionStorage.setItem('idtoken', tok); localStorage.setItem('guide-v1', '1'); localStorage.setItem('guide-v2', '1');
+  }, { tok: 'x.' + payload + '.y', now: new Date('2026-11-06T15:00:00+09:00').getTime() });
   await page.route('https://accounts.google.com/**', (r) => r.fulfill({ body: 'window.google={accounts:{id:{initialize(){},renderButton(){},prompt(){}}}};', contentType: 'text/javascript' }));
   await page.route('https://api.test/**', async (route) => {
     const body = JSON.parse(route.request().postData());
@@ -61,7 +67,12 @@ const server = http.createServer((req, res) => {
   await page.screenshot({ path: path.join(OUT, '1-home.png'), fullPage: true });
   // 시각 없는 이름의 파일을 직접 올리기 (파일 선택 창 대신)
   const xbuf = toXls(files.explore.rows.slice(0, 3));
-  await page.setInputFiles('#pick', [{ name: '통합예약신청자목록 (1).xls', mimeType: 'application/vnd.ms-excel', buffer: xbuf }]);
+  // 파일 저장 시각을 고정한 시계로 만들기 위해 페이지 안에서 파일을 만들어 넣음
+  await page.evaluate(({ b64, name }) => {
+    const bin = atob(b64); const arr = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    const dt = new DataTransfer(); dt.items.add(new File([arr], name, { lastModified: Date.now() }));
+    const inp = document.getElementById('pick'); inp.files = dt.files; inp.dispatchEvent(new Event('change', { bubbles: true }));
+  }, { b64: xbuf.toString('base64'), name: '통합예약신청자목록 (1).xls' });
   await page.waitForSelector('.result-line', { timeout: 15000 });
   const line = await page.$eval('.result-line', (e) => e.textContent);
   console.log('직접 올리기 결과:', line);
@@ -144,20 +155,30 @@ const server = http.createServer((req, res) => {
     console.log('결석: 한 줄 목록 5명, 여러 명 한꺼번에 등록·사유 변경 시트 저장 확인');
   }
   await page.screenshot({ path: path.join(OUT, '6-abs.png'), fullPage: true });
-  // 출석부: 단계별
+  // 출석부: 작업 시작 전 미리보기 (새 명단이 오면 자동으로 다시 분반)
+  const lastAtt = () => { const rows = env.ctx.readTable_('출석부').rows; const r = rows[rows.length - 1]; return r ? { v: +r[1], data: JSON.parse(r[4]) } : null; };
   await page.click('[data-view=att]');
-  await page.click('[data-x=att-start]');
-  await page.screenshot({ path: path.join(OUT, '7a-step1.png') });
-  await page.click('[data-x=att-next]');
-  // 교실을 고르지 않으면 넘어가지 않음
-  await page.click('[data-x=att-next]');
-  if (!(await page.$('.xl-t1 select'))) throw new Error('반 설정 화면이 아님');
+  await page.waitForSelector('text=작업 시작 전 미리보기');
+  await page.screenshot({ path: path.join(OUT, '7a-preview.png'), fullPage: true });
+  const big3 = big.map((r) => r.slice());
+  big3.push(['260101', BT, '또보호자', '010-0000-3001', '', '개인', '', '', '', '또학생', '해솔초', '3-1', '승인', 'idnew2']);
+  env.call('upload', { date: '2026-11-07', files: [parseXls(toXls(big3), '통합예약신청자목록 - 2026-11-05T080000.000.xls')] });
+  await page.click('[data-act=refresh]');
+  await page.waitForFunction(() => /분반을 다시 했습니다/.test(document.getElementById('toast').textContent));
+  if (!(await page.textContent('body')).includes('또학생')) throw new Error('작업 시작 전 자동 재분반 안 됨');
+  console.log('작업 시작 전: 새 명단으로 자동 재분반 확인');
+  // 참가 신청 최종 확정 · 출석부 작업 시작 → 분반 고정 (1차)
+  await page.click('[data-x=att-start-work]');
+  await page.waitForSelector('text=출석부 작업 중');
+  if (!lastAtt() || lastAtt().v !== 1) throw new Error('작업 시작 저장 안 됨');
+  // 반 설정은 고정된 출석부에서
+  const openSet = async (i) => { await page.click('[data-x=att-setopen] >> nth=' + i); await page.waitForSelector('[data-xc=att-b][data-i="' + i + '"][data-f=room1]'); };
+  for (let i = 0; i < 4; i++) await openSet(i);
   const sel = async (i, f, v) => page.selectOption('[data-xc=att-b][data-i="' + i + '"][data-f=' + f + ']', v);
   const typ = async (i, f, v) => page.fill('[data-xi=att-b][data-i="' + i + '"][data-f=' + f + ']', v);
   await sel(0, 'room1', '라온실'); await sel(0, 'room2', '놀이실');
   await sel(1, 'room1', '놀이실'); await sel(1, 'room2', '라온실');
   await sel(2, 'room1', '라온실');
-  await page.click('[data-x=att-next]');
   if (!(await page.textContent('body')).includes('겹칩니다')) throw new Error('교실 겹침 검사가 안 됨');
   await sel(2, 'room1', '혜윰실');
   await sel(3, 'room1', '창의실');
@@ -167,77 +188,90 @@ const server = http.createServer((req, res) => {
   await typ(0, 'name', '기초코딩 오전1반');
   const tag0 = await page.inputValue('[data-xi=att-b][data-i="0"][data-f=tag]');
   if (tag0 !== '기초1') throw new Error('신청반 자동: ' + tag0);
-  await page.screenshot({ path: path.join(OUT, '7b-step2.png'), fullPage: true });
-  await page.click('[data-x=att-next]');
-  await page.waitForSelector('.xls');
-  await page.screenshot({ path: path.join(OUT, '7c-step3.png'), fullPage: true });
-  const parts = await page.$$eval('section .row.between b', (bs) => bs.map((b) => b.textContent).filter((t) => /반|마스터/.test(t)));
-  console.log('분반 블록:', parts.join(' | '));
-  await page.click('[data-x=att-next]');
-  await page.screenshot({ path: path.join(OUT, '7d-step4.png'), fullPage: true });
-  const dls = [];
-  const onDl = (d) => dls.push(d);
-  page.on('download', onDl);
-  await page.click('[data-x=att-save]');
-  for (let k = 0; k < 40 && dls.length < 2; k++) await page.waitForTimeout(250);
-  page.off('download', onDl);
-  if (dls.length < 2) throw new Error('출석부와 명렬표가 함께 내려받아지지 않음: ' + dls.length);
-  const dl = dls[0];
+  await page.screenshot({ path: path.join(OUT, '7b-settings.png'), fullPage: true });
+  await page.click('[data-x=att-save2]');
+  await page.waitForFunction(() => /2차로 저장/.test(document.getElementById('toast').textContent));
+  if (lastAtt().v !== 2 || !/기초코딩 오전1반/.test(lastAtt().data.blocks[0].title) || lastAtt().data.blocks[0].tool1 !== '스케치북') throw new Error('반 설정 저장 안 됨');
+  // 웹앱에서 바로 인쇄 → 인쇄한 반 기록 (PRINT_PDF=1이면 인쇄 화면을 PDF로 저장해 모양 확인)
+  if (process.env.PRINT_PDF) {
+    await page.evaluate(() => { window.print = () => {}; });
+    await page.click('[data-x=att-print][data-what=all]');
+    await page.emulateMedia({ media: 'print' });
+    await page.pdf({ path: path.join(OUT, 'print-all.pdf'), preferCSSPageSize: true, printBackground: true });
+    await page.emulateMedia({ media: 'screen' });
+    await page.waitForTimeout(1200);
+    await page.evaluate(() => { window.print = () => {}; });
+    await page.click('[data-x=att-print][data-what=contacts]');
+    await page.emulateMedia({ media: 'print' });
+    await page.pdf({ path: path.join(OUT, 'print-contacts.pdf'), preferCSSPageSize: true, printBackground: true });
+    await page.emulateMedia({ media: 'screen' });
+    await page.waitForTimeout(1200);
+  } else await page.click('[data-x=att-print][data-what=all]');
+  for (let k = 0; k < 30 && !lastAtt().data.printed; k++) await page.waitForTimeout(100);
+  const pr = lastAtt().data.printed || {};
+  if (Object.keys(pr).length !== lastAtt().data.blocks.length) throw new Error('인쇄 기록: ' + JSON.stringify(pr));
+  await page.waitForSelector('[data-x=att-print][data-what=changed][disabled]');
+  console.log('웹앱 인쇄: 전체 인쇄 → 인쇄한 반 기록, 아직 인쇄 안 한 반 0');
+  // 엑셀·명렬표도 내려받기 가능
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-redl]')]);
   await dl.saveAs(path.join(OUT, 'att1.xlsx'));
-  await dls[1].saveAs(path.join(OUT, 'contacts1.xlsx'));
+  const [dlc] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-contacts]')]);
+  await dlc.saveAs(path.join(OUT, 'contacts1.xlsx'));
   {
     const X = require(process.env.XLSX_PATH || 'xlsx');
     const wb = X.readFile(path.join(OUT, 'contacts1.xlsx'));
     const aoa = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
     const flat = aoa.map((r) => r.join('|'));
-    const waitRow = flat.findIndex((t) => /추가대기 \d+명/.test(t));
-    if (!flat.some((t) => /명렬표/.test(t)) || !flat.some((t) => /연락처/.test(t)) || waitRow < 0) throw new Error('명렬표 내용 이상');
+    if (!flat.some((t) => /명렬표/.test(t)) || !flat.some((t) => /대기자 \d+명/.test(t))) throw new Error('명렬표 내용 이상');
     if (!flat.some((t) => /010-0000-\d{4}/.test(t))) throw new Error('명렬표에 연락처 없음');
-    console.log('명렬표:', aoa.length + '줄, 추가대기 구역 있음, 첫 반 학생 ' + flat.slice(3).findIndex((t) => !/^\d+\|/.test(t)) + '명');
+    console.log('명렬표:', aoa.length + '줄, 대기자 구역 있음');
   }
-  await page.waitForSelector('[data-x=att-cancel]');
-  // 최종 마감 뒤 새 명단: 학생00 예약취소 + 새 승인 학생 → 자동으로 바뀌지 않고 「변동 사항」으로 알림
+  // 작업 시작 뒤 새 명단: 학생00 예약취소 + 새 승인 + 대기 → 바뀌지 않고 「변동 사항」
   {
-    const big2 = big.map((r) => r.slice());
+    const big2 = big3.map((r) => r.slice());
     big2[0][12] = '예약취소';
     big2.push(['260100', BT, '새보호자', '010-0000-3000', '', '개인', '', '', '', '새학생', '가온초', '2-1', '승인', 'idnew']);
+    big2.push(['260102', BT, '대기보호자', '010-0000-3002', '', '개인', '', '', '', '대기학생', '해솔초', '2-2', '대기', 'idwait']);
     const up2 = env.call('upload', { date: '2026-11-07', files: [parseXls(toXls(big2), '통합예약신청자목록 - 2026-11-05T090000.000.xls')] });
     if (up2.results[0].result !== '반영') throw new Error('새 명단 업로드: ' + JSON.stringify(up2.results));
   }
   await page.click('[data-act=refresh]');
   await page.waitForSelector('text=변동 사항 2건');
   const stillThere = await page.$$eval('.xls td', (tds) => tds.some((td) => td.textContent === '학생00'));
-  if (!stillThere) throw new Error('마감한 출석부가 자동으로 바뀜');
+  if (!stillThere) throw new Error('작업 중 출석부가 자동으로 바뀜');
+  // 대기자 연락표: 참석 확정 기록 (공유)
+  await page.click('details.wl summary');
+  await page.click('[data-x=wl][data-no="260102"][data-r="참석 확정"]');
+  for (let k = 0; k < 30 && !env.ctx.readTable_('대기자연락').rows.length; k++) await page.waitForTimeout(100);
+  if (!env.ctx.readTable_('대기자연락').rows.some((r) => r[1] === '260102' && r[2] === '참석 확정')) throw new Error('대기자 연락 결과가 저장되지 않음');
   await page.screenshot({ path: path.join(OUT, '8a-changes.png'), fullPage: false });
+  const optFirst = await page.$eval('[id^=rep-] option', (o) => o.textContent);
+  if (!/^★/.test(optFirst)) throw new Error('참석 확정 대기자가 교체 후보 맨 위가 아님: ' + optFirst);
+  await page.selectOption('[id^=rep-]', '260100');
   await page.click('[data-x=chg-replace]');
-  await page.waitForSelector('text=변동 사항');
-  const dlsB = [];
-  const onDlB = (d) => dlsB.push(d);
-  page.on('download', onDlB);
   await page.click('[data-x=att-save2]');
-  for (let k = 0; k < 40 && dlsB.length < 2; k++) await page.waitForTimeout(250);
-  page.off('download', onDlB);
-  if (dlsB.length < 2) throw new Error('바뀐 반 출력이 안 됨');
-  await dlsB[0].saveAs(path.join(OUT, 'att-changed.xlsx'));
+  await page.waitForFunction(() => /3차로 저장/.test(document.getElementById('toast').textContent));
   {
-    const X = require(process.env.XLSX_PATH || 'xlsx');
-    const ws = X.readFile(path.join(OUT, 'att-changed.xlsx')).Sheets;
-    const aoa = X.utils.sheet_to_json(ws[Object.keys(ws)[0]], { header: 1, defval: '' });
-    const names = aoa.map((r) => r[3]);
-    if (aoa.length > 28 || !names.includes('새학생') || names.includes('학생00')) throw new Error('바뀐 반만 출력 확인 실패: ' + aoa.length + '줄');
-    console.log('마감 후 변동: 알림 → 교체 승인 → 바뀐 반만 출력(' + aoa.length + '줄) 확인');
+    const d3 = lastAtt().data;
+    const allNames = d3.blocks.flatMap((b) => b.students.filter((x) => x.status !== '취소').map((x) => x.name));
+    if (!allNames.includes('새학생') || allNames.includes('학생00')) throw new Error('교체가 저장되지 않음');
+    if (!(d3.changed || []).length) throw new Error('바뀐 반 기록 없음');
   }
-  // 늦게 저장하는 쪽은 막힘 (다른 점검자가 먼저 다음 차수 저장)
+  await page.waitForSelector('[data-x=att-print][data-what=changed]:not([disabled])');
+  const upLabel = await page.textContent('[data-x=att-print][data-what=changed]');
+  if (!/\(1\)/.test(upLabel)) throw new Error('아직 인쇄 안 한 바뀐 반: ' + upLabel);
+  await page.click('[data-x=att-print][data-what=changed]');
+  await page.waitForSelector('[data-x=att-print][data-what=changed][disabled]');
+  console.log('작업 중 변동: 알림 → 대기자 연락 기록 → 교체 → 저장 → 바뀐 반만 인쇄 확인');
+  // 늦게 저장하는 쪽은 막힘
   const conflict = env.call('attSave', { date: '2026-11-07', data: { blocks: [] }, baseVersion: 1 });
   if (conflict.code !== 'CONFLICT') throw new Error('차수 충돌을 막지 않음');
-  await page.waitForSelector('[data-x=att-cancel]');
   await page.click('[data-x=att-cancel][data-i="0"]');
-  const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-save2]')]);
-  await dl2.saveAs(path.join(OUT, 'att2.xlsx'));
-  // 확정 출석부에서 당일 결석 체크
+  await page.click('[data-x=att-save2]');
+  await page.waitForFunction(() => /4차로 저장/.test(document.getElementById('toast').textContent));
+  // 당일 결석 체크
   await page.check('[data-xc=att-absent][data-i="1"][data-j="0"]');
   await page.waitForSelector('.abs-chk.on');
-  await page.waitForFunction(() => /모두 저장됨/.test((document.getElementById('abs-sync') || {}).textContent || '') || !document.getElementById('abs-sync'));
   for (let k = 0; k < 40 && !env.ctx.readTable_('결석기록').rows.some((r) => r[8] === '출석부 결석 체크'); k++) await page.waitForTimeout(100);
   if (!env.ctx.readTable_('결석기록').rows.some((r) => r[8] === '출석부 결석 체크' && r[9] === '당일 무단결석')) throw new Error('출석부 결석 체크가 시트에 저장되지 않음');
   console.log('출석부 결석 체크 → 결석 기록 저장 확인');
@@ -247,23 +281,15 @@ const server = http.createServer((req, res) => {
   console.log('출석부 저장 뒤 결석 목록 반:', labels2.join(' | '));
   await page.screenshot({ path: path.join(OUT, '6b-abs-after.png'), fullPage: true });
   await page.click('[data-view=att]');
-  // 처음부터 다시 만들어도 반 설정이 그대로 남아 있어야 함
+  // 처음부터 다시 만들기: 미리보기 → 다시 시작해도 반 설정(이름·교실·교구)은 이어짐
   await page.click('[data-x=att-rebuild]');
-  await page.click('[data-x=att-next]');
-  const kept = [await page.inputValue('[data-xi=att-b][data-i="0"][data-f=tool1]'), await page.$eval('[data-xc=att-b][data-i="0"][data-f=room1]', (e) => e.value), await page.inputValue('[data-xi=att-b][data-i="0"][data-f=name]')];
-  if (kept.join('|') !== '스케치북|라온실|기초코딩 오전1반') throw new Error('반 설정이 남아 있지 않음: ' + kept.join('|'));
-  console.log('다시 만들 때 반 설정 유지:', kept.join(' / '));
-  // 마감 전(작업 중)에는 새 명단이 오면 자동으로 다시 분반
-  {
-    const big3 = big.map((r) => r.slice());
-    big3.push(['260101', BT, '또보호자', '010-0000-3001', '', '개인', '', '', '', '또학생', '해솔초', '3-1', '승인', 'idnew2']);
-    env.call('upload', { date: '2026-11-07', files: [parseXls(toXls(big3), '통합예약신청자목록 - 2026-11-06T090000.000.xls')] });
-    await page.click('[data-act=refresh]');
-    await page.waitForFunction(() => /분반을 다시 했습니다/.test(document.getElementById('toast').textContent));
-    if ((await page.inputValue('[data-xi=att-b][data-i="0"][data-f=tool1]')) !== '스케치북') throw new Error('자동 재분반 때 반 설정이 사라짐');
-    console.log('마감 전 자동 재분반 확인 (반 설정 유지)');
-  }
-  console.log('내려받은 파일:', rawDl.suggestedFilename(), dl.suggestedFilename(), dl2.suggestedFilename());
+  await page.waitForSelector('[data-x=att-start-work]');
+  await page.click('[data-x=att-start-work]');
+  await page.waitForFunction(() => /새로 나눈 출석부/.test(document.getElementById('toast').textContent));
+  const rb = lastAtt().data.blocks[0];
+  if (rb.tool1 !== '스케치북' || rb.room1 !== '라온실' || rb.name !== '기초코딩 오전1반') throw new Error('다시 만들 때 반 설정이 사라짐: ' + JSON.stringify([rb.tool1, rb.room1, rb.name]));
+  console.log('처음부터 다시 만들기: 반 설정 유지 확인');
+  console.log('내려받은 파일:', rawDl.suggestedFilename(), dl.suggestedFilename(), dlc.suggestedFilename());
   await page.click('[data-view=settings]');
   await page.waitForSelector('text=수업일');
   await page.waitForSelector('#set-dates');

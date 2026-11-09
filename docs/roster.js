@@ -465,14 +465,35 @@ var Roster = (function () {
       }
       if (blk.waits && blk.waits.length) {
         if (!blk.waitsOnly) r++;
-        band('추가대기 ' + blk.waits.length + '명 · 신청 순서' + (blk.waitLabel ? ' · ' + blk.waitLabel : ''), 12, 'FDE9D9', 24, true);
+        band('대기자 ' + blk.waits.length + '명 · 대기 먼저, 신청 순서' + (blk.waitLabel ? ' · ' + blk.waitLabel : ''), 12, 'FDE9D9', 24, true);
         head(['순서', '기관(학교)', '학년/반', '학생명', '신청자', '연락처', '연락', '메모']);
-        blk.waits.forEach(function (s, k) { line([k + 1, s.school, s.ban, s.name, s.parent, s.phone, '', ''], k === blk.waits.length - 1); });
+        blk.waits.forEach(function (s, k) { line([(k + 1) + (s.state ? ' ' + s.state : ''), s.school, s.ban, s.name, s.parent, s.phone, '', ''], k === blk.waits.length - 1); });
       }
       if (bi < blocks.length - 1) { ws.getRow(r - 1).addPageBreak(); }
     });
     ws.pageSetup.printArea = 'A1:H' + Math.max(1, r - 1);
     return wb;
+  }
+
+  /** 연락처 명렬표를 인쇄용 HTML로 (엑셀 명렬표와 같은 칸·순서) */
+  function contactHtml(blocks) {
+    var head = '<tr>' + CB_COLS.map(function (c) { return '<th style="width:' + Math.round(c[1] * 7 + 5) + 'px">' + escHtml(c[0]) + '</th>'; }).join('') + '</tr>';
+    return blocks.map(function (blk) {
+      var html = '<div class="pa-page"><table class="cb"><thead><tr><th colspan="8" class="cb-t1">' + escHtml(contactTitle(blk.title)) + '</th></tr>' +
+        '<tr><th colspan="8" class="cb-t2">' + escHtml(blk.line || '') + '</th></tr>' + (blk.waitsOnly ? '' : head) + '</thead><tbody>';
+      if (!blk.waitsOnly) {
+        var list = byName(blk.students);
+        html += list.map(function (s, i) { return '<tr><td>' + (i + 1) + '</td><td>' + escHtml(s.school) + '</td><td>' + escHtml(s.ban) + '</td><td>' + escHtml(s.name) + '</td><td>' + escHtml(s.parent) + '</td><td>' + escHtml(s.phone) + '</td><td></td><td></td></tr>'; }).join('') ||
+          '<tr><td colspan="8">(학생 없음)</td></tr>';
+      }
+      html += '</tbody></table>';
+      if (blk.waits && blk.waits.length) {
+        html += '<table class="cb" style="margin-top:12px"><thead><tr><th colspan="8" class="cb-w">대기자 ' + blk.waits.length + '명 · 대기 먼저, 신청 순서' + (blk.waitLabel ? ' · ' + escHtml(blk.waitLabel) : '') + '</th></tr>' +
+          '<tr>' + ['순서', '기관(학교)', '학년/반', '학생명', '신청자', '연락처', '연락', '메모'].map(function (h) { return '<th>' + h + '</th>'; }).join('') + '</tr></thead><tbody>' +
+          blk.waits.map(function (s, k) { return '<tr><td>' + (k + 1) + (s.state ? ' ' + escHtml(s.state) : '') + '</td><td>' + escHtml(s.school) + '</td><td>' + escHtml(s.ban) + '</td><td>' + escHtml(s.name) + '</td><td>' + escHtml(s.parent) + '</td><td>' + escHtml(s.phone) + '</td><td></td><td></td></tr>'; }).join('') + '</tbody></table>';
+      }
+      return html + '</div>';
+    }).join('');
   }
 
   function contactFileName(date, version) {
@@ -481,7 +502,7 @@ var Roster = (function () {
   }
 
   return {
-    CAP: CAP, buildContactBook: buildContactBook, contactFileName: contactFileName, contactTitle: contactTitle, officialSchool: officialSchool, normalizeBan: normalizeBan, sortStudents: sortStudents, students: students,
+    CAP: CAP, buildContactBook: buildContactBook, contactFileName: contactFileName, contactTitle: contactTitle, contactHtml: contactHtml, officialSchool: officialSchool, normalizeBan: normalizeBan, sortStudents: sortStudents, students: students,
     linkSets: linkSets, split: split, shortTools: shortTools, composeLine: composeLine, defaultSessions: defaultSessions,
     swapPair: swapPair, titleDate: titleDate, fileName: fileName, buildWorkbook: buildWorkbook, byName: byName, blockValues: blockValues, sheetHtml: sheetHtml,
     ROOMS: ROOMS, makeTitle: makeTitle, makeLine: makeLine, autoTag: autoTag, defaultBlock: defaultBlock, parseTitle: parseTitle, parseLine: parseLine, checkBlocks: checkBlocks

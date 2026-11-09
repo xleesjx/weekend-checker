@@ -9,7 +9,7 @@ var TZ = 'Asia/Seoul';
 var SHEET = {
   LIST: '통합명단', SUMMARY: '점검현황', STATUS: '처리기록', UPLOADS: '업로드기록', RESTRICT: '신청제한',
   DATES: '설정_수업일', CLASSES: '설정_반', SCHOOLS: '설정_학교', MAP: '예약명연결', USERS: '점검자',
-  LINKS: '같은반요청', ABS: '결석기록', ATT: '출석부', SETLOG: '설정변경기록'
+  LINKS: '같은반요청', ABS: '결석기록', ATT: '출석부', SETLOG: '설정변경기록', WAIT: '대기자연락'
 };
 var TOPIC_SHEET_DEFAULT = '165RlpeCfhR9Z4n_Qq2IoPMTXBlkSiUWZMyBBhO77MBw';
 var TOPIC_TAB_DEFAULT = '하반기';
@@ -38,6 +38,7 @@ function init_() {
   HEADERS[SHEET.ABS] = ['기록ID', '수업일', '신청일련번호', '학생명', '학교', '학반', '반', '연락처', '경로', '사유', '취소시각', '메모', '출석인정', '기록자', '기록시각'];
   HEADERS[SHEET.ATT] = ['수업일', '차수', '저장시각', '저장자', '내용'];
   HEADERS[SHEET.SETLOG] = ['시각', '변경자', '항목', '내용'];
+  HEADERS[SHEET.WAIT] = ['수업일', '신청일련번호', '결과', '메모', '기록자', '기록시각'];
 }
 
 /* ───────── 진입점 ───────── */
@@ -342,6 +343,8 @@ API.state = function (req, user) {
   out.links = readLinks_();
   out.absences = readAbsences_().filter(function (a) { return a.date === date; });
   out.cancelRule = cancelRule_();
+  out.openRule = openRule_();
+  out.waitLogs = readTable_(SHEET.WAIT).rows.filter(function (r) { return r[0] === date; }).map(function (r) { return { no: r[1], result: r[2], memo: r[3], by: r[4], at: r[5] }; });
   out.rooms = rooms_();
   var att = readAtt_();
   out.att = att.filter(function (a) { return a.date === date; }).pop() || null;
@@ -429,6 +432,40 @@ function cancelRule_() {
   return { days: 2, time: '16:00', by: '', at: '', isDefault: true };  // 운영 규정: 수업 2일 전(목) 16:00까지 취소
 }
 
+/** 접수 시작: 수업일 days일 전 time (주말 프로그램: 화 10:00 = 4일 전) — 맨 위 안내줄의 단계 구분에 씀 */
+function openRule_() {
+  try {
+    var r = JSON.parse(PropertiesService.getScriptProperties().getProperty('OPEN_RULE') || 'null');
+    if (r && r.days >= 0 && /^\d{2}:\d{2}$/.test(r.time)) return { days: +r.days, time: r.time, by: r.by || '', at: r.at || '' };
+  } catch (e) { /* 기본값 */ }
+  return { days: 4, time: '10:00', by: '', at: '', isDefault: true };
+}
+
+API.openRule = function (req, user) {
+  var days = Math.floor(+req.days), time = Core.str(req.time);
+  if (!(days >= 0 && days <= 30) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw apiError_('BAD', '접수 시작을 확인해 주세요 (0~30일 전, 00:00~23:59).');
+  return withLock_(function () {
+    var r = { days: days, time: time, by: user.name, at: now_() };
+    PropertiesService.getScriptProperties().setProperty('OPEN_RULE', JSON.stringify(r));
+    appendRows_(SHEET.SETLOG, [[r.at, user.name, '접수 시작', '수업 ' + days + '일 전 ' + time]]);
+    return { rule: r, rev: bumpRev_() };
+  });
+};
+
+/** 토요일 아침 대기자 연락 결과 (참석 확정·불참·연락 안 됨) — 점검자끼리 공유. result가 비면 지움 */
+API.waitLog = function (req, user) {
+  var RESULTS = ['참석 확정', '불참', '연락 안 됨'];
+  if (!req.date || !/^\d{1,12}$/.test(Core.str(req.no))) throw apiError_('BAD', '대상이 없습니다.');
+  if (req.result && RESULTS.indexOf(req.result) < 0) throw apiError_('BAD', '결과를 확인해 주세요.');
+  return withLock_(function () {
+    var rows = readTable_(SHEET.WAIT).rows.filter(function (r) { return !(r[0] === req.date && r[1] === Core.str(req.no)); });
+    var rec = null;
+    if (req.result) { rec = [req.date, Core.str(req.no), req.result, Core.str(req.memo).slice(0, 200), user.name, now_()]; rows.push(rec); }
+    writeTable_(SHEET.WAIT, rows);
+    return { rev: bumpRev_(), log: rec ? { no: rec[1], result: rec[2], memo: rec[3], by: rec[4], at: rec[5] } : null };
+  });
+};
+
 API.cancelRule = function (req, user) {
   var days = Math.floor(+req.days), time = Core.str(req.time);
   if (!(days >= 0 && days <= 14) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw apiError_('BAD', '기준을 확인해 주세요 (0~14일 전, 00:00~23:59).');
@@ -473,6 +510,23 @@ API.attSave = function (req, user) {
     appendRows_(SHEET.ATT, [[req.date, String(version), at, user.name, json]]);
     bumpRev_();
     return { version: version, at: at, by: user.name };
+  });
+};
+
+/** 웹앱에서 인쇄한 반 기록: 그 차수 저장본에 { 반: 인쇄한 차수 }를 덧붙입니다 (새 차수를 만들지 않음) */
+API.attPrinted = function (req) {
+  return withLock_(function () {
+    var sh = sheet_(SHEET.ATT), values = sh.getDataRange().getValues();
+    for (var i = values.length - 1; i >= 1; i--) {
+      if (cellText_(values[i][0]) !== req.date || +values[i][1] !== +req.version) continue;
+      var data = {};
+      try { data = JSON.parse(values[i][4]); } catch (e) { return {}; }
+      data.printed = data.printed || {};
+      (req.keys || []).slice(0, 50).forEach(function (k) { data.printed[String(k)] = +req.version; });
+      sh.getRange(i + 1, 5).setValue(JSON.stringify(data));
+      return { rev: bumpRev_() };
+    }
+    return {};
   });
 };
 
@@ -665,6 +719,7 @@ API.settings = function () {
       rooms: rooms_().map(function (x) { return [x]; })
     },
     cancelRule: cancelRule_(),
+    openRule: openRule_(),
     log: readTable_(SHEET.SETLOG).rows.slice(-15).reverse(),
     hasNeisKey: !!PropertiesService.getScriptProperties().getProperty('NEIS_KEY')
   };
@@ -823,7 +878,7 @@ function menuImportSchools() {
 function setupSheets() {
   init_();
   var ss = ss_();
-  [SHEET.LIST, SHEET.SUMMARY, SHEET.STATUS, SHEET.UPLOADS, SHEET.RESTRICT, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.USERS, SHEET.LINKS, SHEET.ABS, SHEET.ATT, SHEET.SETLOG]
+  [SHEET.LIST, SHEET.SUMMARY, SHEET.STATUS, SHEET.UPLOADS, SHEET.RESTRICT, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.USERS, SHEET.LINKS, SHEET.ABS, SHEET.ATT, SHEET.SETLOG, SHEET.WAIT]
     .forEach(function (n) { sheet_(n); });
 
   if (!readTable_(SHEET.USERS).rows.length) {

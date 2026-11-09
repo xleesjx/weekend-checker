@@ -27,6 +27,7 @@ function makeSheet(name) {
           }
           return rg;
         },
+        setValue: (v) => rg.setValues([[v]]),
         setNumberFormat: () => rg, setFontWeight: () => rg
       };
       return rg;

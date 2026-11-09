@@ -232,6 +232,17 @@ ok(tp.ok && tp.items.length === 1 && tp.items[0].cls === '기초1' && /로비코
   ok(env.call('state', {}).cancelRule.days === 2 && env.call('state', {}).cancelRule.time === '16:00', '취소 기한 기본값 2일 전 16:00');
   r = env.call('cancelRule', { days: 3, time: '25:00' });
   ok(r.code === 'BAD', '잘못된 취소 기한 거부');
+  ok(env.call('state', {}).openRule.days === 4 && env.call('state', {}).openRule.time === '10:00', '접수 시작 기본값 4일 전 10:00');
+  r = env.call('openRule', { days: 3, time: '09:30' });
+  ok(r.ok && env.call('state', {}).openRule.time === '09:30', '접수 시작 바꾸기');
+  r = env.call('waitLog', { date: '2026-11-07', no: '251204', result: '참석 확정' });
+  ok(r.ok && env.call('state', { date: '2026-11-07' }).waitLogs.some((x) => x.no === '251204' && x.result === '참석 확정'), '대기자 연락 결과 저장');
+  r = env.call('waitLog', { date: '2026-11-07', no: '251204', result: '' });
+  ok(r.ok && !env.call('state', { date: '2026-11-07' }).waitLogs.length, '대기자 연락 결과 지우기');
+  ok(env.call('waitLog', { date: '2026-11-07', no: '251204', result: '아무거나' }).code === 'BAD', '잘못된 연락 결과 거부');
+  const v = env.call('attSave', { date: '2026-11-14', data: { blocks: [{ key: 'a#0', students: [] }] }, baseVersion: 0 }).version;
+  env.call('attPrinted', { date: '2026-11-14', version: v, keys: ['a#0'] });
+  ok(env.call('state', { date: '2026-11-14' }).att.data.printed['a#0'] === v, '인쇄한 반 기록');
 })();
 
 console.log('테스트 ' + passed + '개 통과');
