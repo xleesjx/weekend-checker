@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '30';
+  var APP_VERSION = '31';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -458,7 +458,7 @@
     if (S.lastUpload) html += uploadResult(S.lastUpload);
     if (S.data.att) {
       var chN = attChanges(S.data.att.data).count;
-      if (chN) html += '<section class="card pad row between" style="border:2px solid #F59E0B"><b>⚠ 최종 마감한 출석부에 변동 사항 ' + chN + '건 (취소·새 승인)</b><button class="btn primary" data-view="att">출석부에서 확인하기</button></section>';
+      if (chN) html += '<section class="card pad row between" style="border:2px solid #F59E0B"><b>⚠ 작업 중인 출석부에 변동 사항 ' + chN + '건 (취소·새 승인)</b><button class="btn primary" data-view="att">출석부에서 확인하기</button></section>';
     }
 
     var steps = [
@@ -1780,11 +1780,11 @@
 
   function changesCard(A) {
     var ch = attChanges(A.data), blocks = A.data.blocks || [];
-    if (!ch.count) return '<section class="card pad small" style="border-color:#86EFAC">✔ 마감한 뒤 바뀐 신청이 없습니다. 새 명단이 올라오면 여기에서 알려 드립니다.</section>';
+    if (!ch.count) return '<section class="card pad small" style="border-color:#86EFAC">✔ 작업 시작 뒤 바뀐 신청이 없습니다. 새 명단이 올라오면 여기에서 알려 드립니다.</section>';
     var KIND = { cancel: '예약취소', unapproved: '승인 아님', gone: '명단에서 사라짐' };
     var live = function (b) { return (b.students || []).filter(function (x) { return x.status !== '취소'; }).length; };
     var html = '<section class="card pad" style="display:flex;flex-direction:column;gap:10px;border:2px solid #F59E0B"><div class="row between"><b style="font-size:17px">⚠ 변동 사항 ' + ch.count + '건</b>' +
-      '<span class="muted small">자동으로 바꾸지 않습니다. 하나씩 확인하고 버튼을 눌러 주세요. 바꾼 뒤 [변경 저장]을 누르면 <b>바뀐 반만</b> 내려받습니다.</span></div>';
+      '<span class="muted small">자동으로 바꾸지 않습니다. 하나씩 확인하고 버튼을 눌러 주세요. 바꾼 뒤 [저장] → <b>[아직 인쇄 안 한 바뀐 반]</b>으로 그 반만 인쇄합니다.</span></div>';
     var used = {};
     ch.out.forEach(function (o) {
       var b = blocks[o.bi], g = gOfKey(b.key);
