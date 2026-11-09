@@ -32,6 +32,25 @@ function codes(row) { return row.issues.map((i) => i.code).sort().join(','); }
     ok(!a['1'].issues.length, sc + ' → 관내·중1 정상: ' + a['1'].issues.map((i) => i.label).join(','));
   });
   ok(!!ridx['중앙'], '학교 목록 색인');
+  // 정식 학교 이름으로 같은 학교인지 (울산·울주가 붙은 학교, 초·중, 앞 두 글자가 같은 다른 학교)
+  const SL = ['울산초등학교', '울산고등학교', '울산양정초등학교', '울산중앙초등학교', '울산중앙중학교', '신정초등학교', '신정상초등학교', '옥동초등학교', '옥동중학교', '울주명지초등학교']
+    .map((n) => ({ name: n, level: Core.schoolLevel(n) }));
+  [['울산양정초', '울산초', 'diff'], ['울산양정초', '양정초등학교', 'same'], ['울산중앙초', '울산중앙중', 'diff'], ['옥동초', '옥동중', 'diff'], ['옥동', '옥동초', 'maybe'],
+    ['신정초', '신정상초', 'diff'], ['울산초', '울산고', 'diff'], ['울산', '울산초', 'maybe'], ['명지초', '울주명지초등학교', 'same']]
+    .forEach(([a, b, want]) => ok(Core.sameSchool(a, b, SL) === want, a + ' ↔ ' + b + ' = ' + want + ' (' + Core.sameSchool(a, b, SL) + ')'));
+  const rrow2 = (no, name, school, ban) => [no, 't', '부모', '010-0000-' + no, '', '개인', '', '', '', name, school, ban, '대기', 'id' + no];
+  const ctxR = { schools: SL, restrictions: [{ date: '2026-11-07', name: '김하늘', school: '옥동초', reason: '기한 후 취소', absent: '2026-10-31' }] };
+  const cls = { 시간대: '오전', 수업반: 'x', 접수명: 'x', range: { min: 1, max: 9 } };
+  const ar = Core.analyzeRound([
+    { no: '1', row: rrow2('1', '김하늘', '옥동초등학교', '3-2'), cls },
+    { no: '2', row: rrow2('2', '김하늘', '옥동중', '3-2'), cls: { 시간대: '오후', 수업반: 'y', 접수명: 'y', range: { min: 1, max: 9 } } },
+    { no: '3', row: rrow2('3', '김하늘', '옥동', '3-2'), cls: { 시간대: '오후', 수업반: 'z', 접수명: 'z', range: { min: 1, max: 9 } } }
+  ], ctxR, '2026-11-07');
+  const cod = (n) => ar[n].issues.map((i) => i.code);
+  ok(cod('1').includes('RESTRICT'), '신청 제한: 같은 정식 학교 → 확정');
+  ok(!cod('2').includes('RESTRICT') && !cod('2').includes('RESTRICT_MAYBE'), '신청 제한: 앞 두 글자만 같은 다른 학교급(옥동중) → 걸지 않음');
+  ok(cod('3').includes('RESTRICT_MAYBE') && !cod('3').includes('RESTRICT'), '신청 제한: 학교를 정할 수 없음(옥동) → 학교 확인');
+  ok(cod('3').includes('DUP_MAYBE') && !cod('2').includes('DUP') && !cod('3').includes('DUP'), '중복: 옥동중과 옥동은 확인 필요, 확정 아님');
   // 출석부로 옮길 때 걸리는 것도 점검 목록에서 미리 확인 필요로
   const sch2 = [{ name: '가온초등학교', level: '초' }, { name: '가온중학교', level: '중' }, { name: '해솔초등학교', level: '초' }];
   const chk = (school, ban) => Core.analyzeRound([{ no: '1', row: ['1', 't', '부모', '010', '', '개인', '', '', '', '학생', school, ban, '대기', 'id'], cls: { 시간대: '오전', 수업반: 'x', 접수명: 'x', range: { min: 1, max: 9 } } }], { schools: sch2 }, '2026-11-07')['1'].issues.map((i) => i.detail);

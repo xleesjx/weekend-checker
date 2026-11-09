@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '32';
+  var APP_VERSION = '33';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -539,6 +539,39 @@
       '<div class="small">' + issueDetail(r) + '</div>' + actionCell(r) + '</div>';
   }
 
+  /** 이번 회차 신청 제한 학생과 이번 주 신청 여부 (학생명 + 정식 학교 이름으로 찾기) */
+  function restrictMatches() {
+    var memo = {};
+    return (S.data.restrictions || []).map(function (rs) {
+      var hits = [];
+      (S.data.rows || []).forEach(function (r) {
+        if (Core.str(r.cells[9]) !== Core.str(rs.name)) return;
+        var rel = Core.sameSchool(rs.school, r.cells[10], S.data.schools || [], memo);
+        if (rel !== 'diff') hits.push({ row: r, rel: rel });
+      });
+      hits.sort(function (a, b) { return (a.rel === 'same' ? 0 : 1) - (b.rel === 'same' ? 0 : 1); });
+      return { rs: rs, hits: hits, state: hits.some(function (h) { return h.rel === 'same' && !h.row.cancelled; }) ? 'yes' : (hits.some(function (h) { return !h.row.cancelled; }) ? 'maybe' : 'no') };
+    }).sort(function (a, b) { var o = { yes: 0, maybe: 1, no: 2 }; return (o[a.state] - o[b.state]) || String(a.rs.name).localeCompare(String(b.rs.name), 'ko'); });
+  }
+
+  function restrictCard() {
+    var list = restrictMatches();
+    if (!list.length) return '';
+    var yes = list.filter(function (x) { return x.state === 'yes'; }).length, maybe = list.filter(function (x) { return x.state === 'maybe'; }).length;
+    var open = yes + maybe > 0;
+    return '<details class="card pad rcard"' + (open ? ' open' : '') + '><summary><b>🚫 이번 회차 신청 제한 ' + list.length + '명</b> <span class="small">(' + esc(md(S.date)) + ' 수업)' +
+      (yes ? ' · <b style="color:var(--red)">신청함 ' + yes + '명</b>' : '') + (maybe ? ' · <b style="color:var(--amber)">학교 확인 ' + maybe + '명</b>' : '') + '</span> ' +
+      tip('지난 회차 결석 기록 중 출석 인정이 아닌 학생과, 설정의 신청제한 명단에 적은 학생입니다. 학생명이 같고 정식 학교 이름이 같으면 「신청함」, 학교를 정할 수 없으면 「학교 확인」입니다. 잘못 제한된 학생은 결석 메뉴에서 그 회차로 가서 「출석 인정」에 체크하면 빠집니다.') + '</summary>' +
+      '<div class="tbox" style="margin-top:8px"><table class="grid"><thead><tr><th>학생명</th><th>학교 (제한 명단)</th><th>사유</th><th>결석일</th><th>이번 주 신청</th></tr></thead><tbody>' + list.map(function (x) {
+        var rs = x.rs, h = x.hits.filter(function (y) { return !y.row.cancelled; });
+        var cell = x.state === 'no' ? '<span class="muted">아직 신청 안 함</span>' : h.map(function (y) {
+          return '<div><b style="color:' + (y.rel === 'same' ? 'var(--red)' : 'var(--amber)') + '">⚠ ' + (y.rel === 'same' ? '신청함' : '신청했을 수 있음 · 학교 확인') + '</b> ' +
+            esc(y.row.cls) + ' · ' + esc(y.row.cells[12]) + (y.rel === 'same' ? '' : ' · 적힌 학교 「' + esc(y.row.cells[10]) + '」') + ' <button class="btn sm" data-x="r-find" data-name="' + esc(rs.name) + '">보기</button></div>';
+        }).join('');
+        return '<tr class="' + (x.state === 'no' ? 'muted' : '') + '"><td><b>' + esc(rs.name) + '</b></td><td>' + esc(rs.school) + '</td><td>' + esc(rs.reason || '') + (rs.memo ? ' <span class="muted small">' + esc(rs.memo) + '</span>' : '') + '</td><td>' + esc(Core.shortDate(rs.absent) || '') + '</td><td>' + cell + '</td></tr>';
+      }).join('') + '</tbody></table></div></details>';
+  }
+
   function viewReview() {
     var cols = visibleCols();
     var head = cols.map(function (i) { return '<th>' + (i === 1 ? '반' : esc(H[i])) + '</th>'; }).join('') + '<th class="chk">사유</th><th>자세한 내용</th><th>처리</th>';
@@ -547,7 +580,7 @@
       ['amber', '확인 필요 · 미처리', '입력 내용 오류 · 학부모 연락처 필요 — 보호자에게 연락해 확인한 뒤 <b>통합예약시스템 관리자 페이지에서 원본 수정</b> (다음 명단부터 다시 걸리지 않습니다)', openRows('amber')],
       ['done', '처리 완료 · 문제없음', '최근 처리한 것이 위 · 잘못 누른 것은 되돌리기', doneRows()]
     ];
-    var html = '<section class="card pad row between"><div class="row">' + roundSelect() + colsToolbar() + '</div>' +
+    var html = restrictCard() + '<section class="card pad row between"><div class="row">' + roundSelect() + colsToolbar() + '</div>' +
       '<span class="muted small">열 순서는 엑셀 원본과 같습니다 ' + tip('완료: 연락·취소 등 조치를 함 / 문제없음: 확인해 보니 정상. 처리한 항목은 아래 「처리 완료」로 내려갑니다. 신청 내용이 나중에 바뀌면 다시 미처리로 올라옵니다.') + '</span></section>';
     sections.forEach(function (s) {
       html += '<section class="card" style="overflow:hidden"><div class="sec-head ' + s[0] + '"><span class="badge ' + s[0] + '">' + s[1] + ' ' + s[3].length + '건</span><span class="small">' + s[2] + '</span></div>';
@@ -919,6 +952,9 @@
     return m ? (+m[1]) + '/' + (+m[2]) + ' ' + m[3] : String(t || '');
   }
   function roomList(cur) { var l = (S.data && S.data.rooms && S.data.rooms.length ? S.data.rooms : Roster.ROOMS).slice(); if (cur && l.indexOf(cur) < 0) l.push(cur); return l; }
+  /** 같은 학교일 수 있으면 true (정식 학교 이름 기준, 다른 학교로 확정되면 false) */
+  var schMemo = {};
+  function sameSch(a, b) { return Core.sameSchool(a, b, (S.data && S.data.schools) || [], schMemo) !== 'diff'; }
   function mmdd(date) { return date.slice(5, 7) + date.slice(8, 10); }
   function md(date) { return (+date.slice(5, 7)) + '월 ' + (+date.slice(8, 10)) + '일'; }
 
@@ -927,7 +963,7 @@
   /** 이번 회차에 해당하는 묶음: 이번 회차 요청 + 다른 회차의 '계속' 요청 중 이번에도 2명 이상 있는 것 */
   function dateLinks() {
     var rows = S.data.rows || [];
-    var has = function (m) { return rows.some(function (r) { return Core.str(r.cells[9]) === m.name && Core.schoolKey(r.cells[10]) === Core.schoolKey(m.school); }); };
+    var has = function (m) { return rows.some(function (r) { return Core.str(r.cells[9]) === m.name && sameSch(r.cells[10], m.school); }); };
     return (S.data.links || []).filter(function (g) {
       if (g.date === S.date) return true;
       return g.scope === '계속' && g.members.filter(has).length >= 2;
@@ -940,7 +976,7 @@
       var letter = String.fromCharCode(65 + (k % 26));
       x.g.members.forEach(function (m) {
         rows.forEach(function (r) {
-          if ((x.applied && m.no && r.no === m.no) || (Core.str(r.cells[9]) === m.name && Core.schoolKey(r.cells[10]) === Core.schoolKey(m.school))) out[r.no] = letter;
+          if ((x.applied && m.no && r.no === m.no) || (Core.str(r.cells[9]) === m.name && sameSch(r.cells[10], m.school))) out[r.no] = letter;
         });
       });
     });
@@ -1100,7 +1136,7 @@
     var blocks = (S.data.att && S.data.att.data && S.data.att.data.blocks) || [];
     var nameOf = function (b) { return b.name || ((Roster.parseTitle(b.title) || {}).name) || b.tag || ''; };
     for (var i = 0; i < blocks.length; i++) {
-      var hit = (blocks[i].students || []).some(function (s) { return (a.no && s.no === a.no) || (!a.no && s.name === a.name && Core.schoolKey(s.school) === Core.schoolKey(a.school)); });
+      var hit = (blocks[i].students || []).some(function (s) { return (a.no && s.no === a.no) || (!a.no && s.name === a.name && sameSch(s.school, a.school)); });
       if (hit) return { order: i, label: nameOf(blocks[i]) };
     }
     var r = a.no ? rowByNo(a.no) : null;
@@ -1209,6 +1245,10 @@
       var si = seatInfo();
       if (si.length) tasks.push(prefix + si.map(function (x) { return btn('data-go="wait" data-cls="' + esc(x.name) + '"', esc(x.name) + ' 남은 ' + x.left + ' · 대기 ' + x.wait); }).join(' '));
     };
+    var restrictTask = function () {
+      var rm = restrictMatches(), y = rm.filter(function (q) { return q.state === 'yes'; }).length, m = rm.filter(function (q) { return q.state === 'maybe'; }).length;
+      if (y + m) tasks.push('신청 제한 학생 중 <b style="color:var(--red)">' + y + '명 신청함</b>' + (m ? ' · 학교 확인 ' + m + '명' : '') + ' ' + btn('data-view="review"', '점검 목록 →'));
+    };
     var title = '';
     if (st === 'before') {
       title = '접수 전 · 다음 접수는 ' + dayText(sc.open.slice(0, 10)) + ' ' + sc.open.slice(11) + '부터';
@@ -1218,6 +1258,7 @@
       title = firstDay ? '접수 첫날 · 첫 승인 점검' : '접수 기간 · 추가 승인 확인';
       tasks.push((firstDay ? '명단 받기 → 취소 대상·확인 필요 처리 → 통합예약에서 승인 ' : '명단을 받아 새 신청 점검 ') + btn('data-act="cms"', '통합예약 관리자 ↗'));
       checks();
+      restrictTask();
       seats('추가 승인 가능: ');
       if (now.slice(0, 10) === sc.deadline.slice(0, 10)) tasks.push('오늘 ' + sc.deadline.slice(11) + ' 취소 기한 · 오전에 <b>승인 학생 보호자에게 취소 기한 안내 문자</b>');
       tasks.push('같은 반 요청은 나올 때마다 묶기 ' + btn('data-view="full"', '전체 명단 →'));
@@ -1226,6 +1267,7 @@
       var lc = lateCancels().length;
       tasks.push('기한 후 취소 후보 <b>' + lc + '명</b> ' + btn('data-view="abs"', '결석 →'));
       checks();
+      restrictTask();
       seats('정원이 안 찬 반 (추가 접수 중이면 추가 승인): ');
     } else if (st === 'work') {
       title = '출석부 작업일';
@@ -1350,9 +1392,9 @@
     var schools = S.data.schools || [];
     var off = Core.officialSchool(sc, schools);
     // 이번 회차 명단에 같은 학생이 있으면 신청번호·반·연락처를 이어 붙입니다
-    var r = (S.data.rows || []).filter(function (x) { return Core.str(x.cells[9]) === n && Core.schoolKey(x.cells[10]) === Core.schoolKey(sc); })[0];
+    var r = (S.data.rows || []).filter(function (x) { return Core.str(x.cells[9]) === n && sameSch(x.cells[10], sc); })[0];
     if (r && absOf(r.no)) return 'dup';
-    if ((S.data.absences || []).some(function (a) { return a.name === n && Core.schoolKey(a.school) === Core.schoolKey(sc); })) return 'dup';
+    if ((S.data.absences || []).some(function (a) { return a.name === n && sameSch(a.school, sc); })) return 'dup';
     saveAbs({ date: S.date, no: r ? r.no : '', name: n, school: off.ok ? off.name : sc, ban: Core.normalizeBan(bn).ban, cls: r ? r.cls : '', phone: r ? r.cells[3] : '', cancelAt: r && r.cancelAt ? shortTs(r.cancelAt) : '',
       src: '수기 입력', reason: '기한 후 취소' }, true);
     return r ? 'ok' : 'nomatch';
@@ -1398,7 +1440,7 @@
   function computeParts() {
     var A = S.att;
     A.sources = []; A.errors = [];
-    A.sets = Roster.linkSets(S.data.links, attStudents(), S.date, A.acceptKeep);
+    A.sets = Roster.linkSets(S.data.links, attStudents(), S.date, A.acceptKeep, S.data.schools || []);
     attGroups().forEach(function (g) {
       var parts;
       if (g.students.length > Roster.CAP) {
@@ -1973,6 +2015,7 @@
       if (da && confirm(da.name + ' 학생의 결석 기록을 삭제할까요?')) deleteAbs(da);
     }
     else if (x === 'abs-add') absAddManual();
+    else if (x === 'r-find') { S.query = t.getAttribute('data-name'); S.view = 'full'; render(); window.scrollTo(0, 0); }
     else if (x === 'guide-print') window.print();
     else if (x === 'set-add') { var ta = t.getAttribute('data-tab'); setCapture(ta); S.setDraft[ta].push([]); render(); }
     else if (x === 'set-del') { var td = t.getAttribute('data-tab'); setCapture(td); S.setDraft[td].splice(+t.getAttribute('data-r'), 1); render(); }

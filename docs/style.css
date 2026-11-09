@@ -251,3 +251,8 @@ details.wl td { padding: 4px 6px; vertical-align: middle; }
 
 /* 출석부 상단 「더 보기」 */
 details.more summary { cursor: pointer; color: var(--muted); }
+
+/* 점검 목록 위 신청 제한 명단 */
+details.rcard { border: 2px solid #FCA5A5; background: #FFF5F5; }
+details.rcard summary { cursor: pointer; }
+details.rcard tr.muted td { color: var(--muted); }

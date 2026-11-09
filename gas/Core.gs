@@ -27,6 +27,8 @@ var Core = (function () {
     GRADE: { level: 'red', label: '대상 학년 확인' },
     OUTSIDE: { level: 'red', label: '관외 학교' },
     RESTRICT: { level: 'red', label: '신청 제한 학생' },
+    RESTRICT_MAYBE: { level: 'amber', label: '신청 제한 확인' },
+    DUP_MAYBE: { level: 'amber', label: '중복 신청 확인' },
     INPUT: { level: 'amber', label: '입력 내용 오류' },
     PARENT: { level: 'amber', label: '학부모 연락처 필요' }
   };
@@ -208,6 +210,28 @@ var Core = (function () {
     return { ban: str(raw), ok: false };
   }
 
+  /**
+   * 두 학교 이름이 같은 학교인지: 'same' | 'diff' | 'maybe'
+   * 학교 목록(NEIS 정식 이름)으로 양쪽을 정식 이름으로 바꿔 비교합니다.
+   *  - 둘 다 정식 이름으로 정해지면 정식 이름이 같아야 same (울산중앙초 ≠ 울산중앙중, 신정초 ≠ 신정상초)
+   *  - 학교급(초·중·고)이 다르면 diff
+   *  - 한쪽이라도 정할 수 없고(예: '옥동', '울산') 앞 두 글자가 같으면 maybe → 사람이 확인
+   * memo: 같은 이름을 여러 번 찾지 않도록 (선택)
+   */
+  function sameSchool(a, b, schools, memo) {
+    var na = normSchool(a), nb = normSchool(b);
+    if (!na || !nb) return 'maybe';
+    if (na === nb) return 'same';
+    memo = memo || {};
+    var res = function (x) { return memo[x] || (memo[x] = officialSchool(x, schools)); };
+    var oa = res(na), ob = res(nb);
+    if (oa.ok && ob.ok) return oa.name === ob.name ? 'same' : 'diff';
+    var lvOf = function (x, o) { return schoolLevel(x) || (o.ok ? schoolLevel(o.name) : null); };
+    var la = lvOf(na, oa), lb = lvOf(nb, ob);
+    if (la && lb && la !== lb) return 'diff';
+    return schoolKey(na) === schoolKey(nb) ? 'maybe' : 'diff';
+  }
+
   function looksLikeSchool(s, idx) {
     var t = normSchool(s);
     if (t.length < 2) return false;
@@ -273,6 +297,7 @@ var Core = (function () {
     var out = {};
     var groups = {};
     var restrictions = (ctx.restrictions || []).filter(function (r) { return r.date === date; });
+    var memo = {};
 
     entries.forEach(function (e) {
       var row = e.row;
@@ -334,16 +359,19 @@ var Core = (function () {
           addIssue(issues, 'INPUT', '학반 형식 확인 (적힌 그대로: ' + it.grade + ' → 예: 3-2)', [C['학반']]);
         }
 
-        // 신청 제한
+        // 신청 제한 (학생명이 같고 정식 학교가 같으면 확정, 학교를 정할 수 없으면 확인 필요)
         restrictions.forEach(function (rs) {
-          if (str(rs.name) === it.name && schoolKey(rs.school) === key && it.name) {
-            addIssue(issues, 'RESTRICT', (rs.reason ? rs.reason + ' ' : '') + shortDate(rs.absent) + ' → ' + shortDate(date) + ' 신청 제한', [C['학생명']]);
-          }
+          if (!it.name || str(rs.name) !== it.name) return;
+          var rel = sameSchool(rs.school, it.school || it.home, ctx.schools, memo);
+          var why = (rs.reason ? rs.reason + ' ' : '') + shortDate(rs.absent) + ' → ' + shortDate(date) + ' 신청 제한';
+          if (rel === 'same') addIssue(issues, 'RESTRICT', why, [C['학생명']]);
+          else if (rel === 'maybe') addIssue(issues, 'RESTRICT_MAYBE', '신청 제한 학생일 수 있음 — 학교 확인 (제한 명단: ' + rs.school + ' / 적힌 학교: ' + (it.school || it.home || '없음') + ') · ' + why, [C['학생명'], C['학교명']]);
         });
 
-        // 중복 묶음 (같은 시간대 + 학생명 + 학교 앞 두 글자)
-        if (it.name && key && e.cls) {
-          var g = e.cls['시간대'] + '|' + it.name + '|' + key;
+        // 중복 묶음 (같은 시간대 + 학생명 → 아래에서 학교를 비교)
+        if (it.name && e.cls) {
+          var g = e.cls['시간대'] + '|' + it.name;
+          e._school = it.school || it.home || '';
           (groups[g] = groups[g] || []).push(e);
         }
       }
@@ -354,8 +382,15 @@ var Core = (function () {
       var list = groups[g];
       if (list.length < 2) return;
       list.forEach(function (e) {
-        var others = list.filter(function (o) { return o !== e; }).map(function (o) { return o.cls['수업반'] + '(' + o.no + ')'; });
-        addIssue(out[e.no].issues, 'DUP', '같은 ' + e.cls['시간대'] + ' 시간대에 또 신청: ' + others.join(', '), [C['학생명'], C['학교명']]);
+        var same = [], maybe = [];
+        list.forEach(function (o) {
+          if (o === e) return;
+          var rel = sameSchool(e._school, o._school, ctx.schools, memo);
+          if (rel === 'same') same.push(o); else if (rel === 'maybe') maybe.push(o);
+        });
+        var label = function (o) { return o.cls['수업반'] + '(' + o.no + (o._school !== e._school ? ' · ' + o._school : '') + ')'; };
+        if (same.length) addIssue(out[e.no].issues, 'DUP', '같은 ' + e.cls['시간대'] + ' 시간대에 또 신청: ' + same.map(label).join(', '), [C['학생명'], C['학교명']]);
+        if (maybe.length) addIssue(out[e.no].issues, 'DUP_MAYBE', '같은 학생일 수 있음 — 학교 확인: ' + maybe.map(label).join(', '), [C['학생명'], C['학교명']]);
       });
     });
 
@@ -437,7 +472,7 @@ var Core = (function () {
     isListFile: isListFile, tsFromMillis: tsFromMillis, fileStamp: fileStamp, validTs: validTs,
     parseGradeRange: parseGradeRange, gradeLabel: gradeLabel, rangeLabel: rangeLabel, parseTitle: parseTitle,
     schoolKey: schoolKey, schoolLevel: schoolLevel, buildSchoolIndex: buildSchoolIndex, interpret: interpret,
-    officialSchool: officialSchool, normalizeBan: normalizeBan,
+    officialSchool: officialSchool, normalizeBan: normalizeBan, sameSchool: sameSchool,
     analyzeRound: analyzeRound, fingerprint: fingerprint, currentRound: currentRound, roundNumber: roundNumber,
     activeClasses: activeClasses, resolveClass: resolveClass, instanceKey: instanceKey, instanceCovers: instanceCovers,
     nextClassDate: nextClassDate

@@ -343,6 +343,9 @@ API.state = function (req, user) {
   out.uploadedFiles = uploads.map(function (u) { return u[2] + '|' + u[3]; });
   out.links = readLinks_();
   out.absences = readAbsences_().filter(function (a) { return a.date === date; });
+  // 이번 회차 신청 제한 명단 (점검 목록 맨 위 카드)
+  out.restrictions = ctx.restrictions.filter(function (r) { return r.date === date; })
+    .map(function (r) { return { name: r.name, school: r.school, reason: r.reason, absent: r.absent, memo: r.memo }; });
   out.cancelRule = cancelRule_();
   out.openRule = openRule_();
   out.marks = readTable_(SHEET.MARKS).rows.filter(function (r) { return r[0] === date; }).map(function (r) { return { kind: r[1], no: r[2], by: r[3] }; });

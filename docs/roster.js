@@ -39,14 +39,15 @@ var Roster = (function () {
   }
 
   /** 같은 반 요청 묶음 → 학생 번호 묶음 목록 [[no, no], ...] */
-  function linkSets(links, list, date, acceptKeep) {
+  function linkSets(links, list, date, acceptKeep, schools) {
+    var memo = {};
     var out = [];
     (links || []).forEach(function (g) {
       var useIt = g.date === date || (g.scope === '계속' && acceptKeep && acceptKeep[g.id]);
       if (!useIt) return;
       var nos = [];
       g.members.forEach(function (m) {
-        var hit = list.filter(function (s) { return (g.date === date && m.no && s.no === m.no) || (s.name === m.name && Core.schoolKey(s.school) === Core.schoolKey(m.school)); })[0];
+        var hit = list.filter(function (s) { return (g.date === date && m.no && s.no === m.no) || (s.name === m.name && Core.sameSchool(s.school, m.school, schools || [], memo) !== 'diff'); })[0];
         if (hit && nos.indexOf(hit.no) < 0) nos.push(hit.no);
       });
       if (nos.length >= 2) out.push({ id: g.id, nos: nos });
