@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '35';
+  var APP_VERSION = '36';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -561,7 +561,16 @@
   /** 이번 회차 신청 제한 학생과 이번 주 신청 여부 (학생명 + 정식 학교 이름으로 찾기) */
   function restrictMatches() {
     var memo = {};
-    return (S.data.restrictions || []).map(function (rs) {
+    // 같은 학생(이름·학교)·같은 결석일의 기록은 한 줄로 (신청했던 반이 여럿이면 함께)
+    var groups = [];
+    (S.data.restrictions || []).forEach(function (r) {
+      var g = groups.filter(function (x) { return x.name === r.name && x.absent === r.absent && Core.sameSchool(x.school, r.school, S.data.schools || [], memo) === 'same'; })[0];
+      if (!g) { g = { name: r.name, school: r.school, absent: r.absent, ban: '', parent: '', phone: '', items: [], memo: [] }; groups.push(g); }
+      g.ban = g.ban || r.ban || ''; g.parent = g.parent || r.parent || ''; g.phone = g.phone || r.phone || '';
+      g.items.push({ cls: r.cls || '', reason: r.reason || '', cancelAt: r.cancelAt || '' });
+      if (r.memo) g.memo.push(r.memo);
+    });
+    return groups.map(function (rs) {
       var hits = [];
       (S.data.rows || []).forEach(function (r) {
         if (Core.str(r.cells[9]) !== Core.str(rs.name)) return;
@@ -581,14 +590,19 @@
     return '<details class="card pad rcard"' + (open ? ' open' : '') + '><summary><b>🚫 이번 회차 신청 제한 ' + list.length + '명</b> <span class="small">(' + esc(md(S.date)) + ' 수업)' +
       (yes ? ' · <b style="color:var(--red)">신청함 ' + yes + '명</b>' : '') + (maybe ? ' · <b style="color:var(--amber)">학교 확인 ' + maybe + '명</b>' : '') + '</span> ' +
       tip('지난 회차 결석 기록 중 출석 인정이 아닌 학생과, 설정의 신청제한 명단에 적은 학생입니다. 학생명이 같고 정식 학교 이름이 같으면 「신청함」, 학교를 정할 수 없으면 「학교 확인」입니다. 잘못 제한된 학생은 결석 메뉴에서 그 회차로 가서 「출석 인정」에 체크하면 빠집니다.') + '</summary>' +
-      '<div class="tbox" style="margin-top:8px"><table class="grid"><thead><tr><th>학생명</th><th>학교 (제한 명단)</th><th>사유 · 취소 시각</th><th>결석일</th><th>이번 주 신청</th></tr></thead><tbody>' + list.map(function (x) {
+      '<div class="tbox" style="margin-top:8px"><table class="grid rtbl"><thead><tr><th>학생명</th><th>학교</th><th>학반</th><th>신청자 (연락처)</th><th>사유 · 취소 시각</th><th>신청했던 반 (수업일)</th><th>이번 주 신청</th></tr></thead><tbody>' + list.map(function (x) {
         var rs = x.rs, h = x.hits.filter(function (y) { return !y.row.cancelled; });
         var cell = x.state === 'no' ? '<span class="muted">아직 신청 안 함</span>' : h.map(function (y) {
           return '<div><b style="color:' + (y.rel === 'same' ? 'var(--red)' : 'var(--amber)') + '">⚠ ' + (y.rel === 'same' ? '신청함' : '신청했을 수 있음 · 학교 확인') + '</b> ' +
             esc(y.row.cls) + ' · ' + esc(y.row.cells[12]) + (y.rel === 'same' ? '' : ' · 적힌 학교 「' + esc(y.row.cells[10]) + '」') + ' <button class="btn sm" data-x="r-find" data-name="' + esc(rs.name) + '">보기</button></div>';
         }).join('');
-        return '<tr class="' + (x.state === 'no' ? 'muted' : '') + '"><td><b>' + esc(rs.name) + '</b></td><td>' + esc(rs.school) + '</td><td>' + esc(rs.reason || '') +
-          (rs.cancelAt ? ' <b style="color:var(--red);white-space:nowrap">' + esc(rs.cancelAt) + ' 취소</b>' : '') + (rs.memo ? ' <span class="muted small">' + esc(rs.memo) + '</span>' : '') + '</td><td>' + esc(Core.shortDate(rs.absent) || '') + '</td><td>' + cell + '</td></tr>';
+        var reasons = rs.items.map(function (it) { return esc(it.reason) + (it.cancelAt ? ' <b style="color:var(--red);white-space:nowrap">' + esc(it.cancelAt) + ' 취소</b>' : ''); });
+        var uniq = reasons.filter(function (v, k) { return reasons.indexOf(v) === k; });
+        return '<tr class="' + (x.state === 'no' ? 'muted' : '') + '"><td><b>' + esc(rs.name) + '</b></td><td>' + esc(rs.school) + '</td><td>' + esc(rs.ban || '—') + '</td>' +
+          '<td>' + esc(rs.parent || '—') + (rs.phone ? '<br><a class="small" href="tel:' + esc(String(rs.phone).replace(/[^0-9]/g, '')) + '">' + esc(rs.phone) + '</a>' : '') + '</td>' +
+          '<td>' + uniq.join('<br>') + (rs.memo.length ? '<br><span class="muted small">' + esc(rs.memo.join(' / ')) + '</span>' : '') + '</td>' +
+          '<td>' + (rs.items.map(function (it) { return esc(it.cls || '—'); }).filter(function (v, k, a) { return a.indexOf(v) === k; }).join('<br>')) + ' <span class="muted small">(' + esc(Core.shortDate(rs.absent) || '') + ')</span></td>' +
+          '<td>' + cell + '</td></tr>';
       }).join('') + '</tbody></table></div></details>';
   }
 

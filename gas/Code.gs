@@ -289,7 +289,8 @@ function loadCtx_() {
   // 결석 기록 중 출석 인정이 아닌 것은 다음 수업일 신청 제한
   readTable_(SHEET.ABS).rows.forEach(function (r) {
     if (!r[3] || r[12] === 'Y') return;
-    restrictions.push({ absent: r[1], name: Core.str(r[3]), school: Core.str(r[4]), reason: Core.str(r[9]) || '결석', date: Core.nextClassDate(dates, r[1]), memo: Core.str(r[11]), cancelAt: Core.str(r[10]) });
+    restrictions.push({ absent: r[1], name: Core.str(r[3]), school: Core.str(r[4]), reason: Core.str(r[9]) || '결석', date: Core.nextClassDate(dates, r[1]), memo: Core.str(r[11]), cancelAt: Core.str(r[10]),
+      no: Core.str(r[2]), ban: Core.str(r[5]), cls: Core.str(r[6]), phone: Core.str(r[7]) });
   });
   var mappings = {};
   readTable_(SHEET.MAP).rows.forEach(function (r) { if (r[0]) mappings[r[0]] = r[1]; });
@@ -461,8 +462,15 @@ function stateBuild_(req, user) {
   out.links = readLinks_();
   out.absences = readAbsences_().filter(function (a) { return a.date === date; });
   // 이번 회차 신청 제한 명단 (점검 목록 맨 위 카드)
-  out.restrictions = ctx.restrictions.filter(function (r) { return r.date === date; })
-    .map(function (r) { return { name: r.name, school: r.school, reason: r.reason, absent: r.absent, memo: r.memo, cancelAt: r.cancelAt || '' }; });
+  // 이번 회차 신청 제한 명단 (민원 대응용으로 자세히: 학반·신청자·연락처·신청했던 반은 그때 명단에서)
+  var byNo = {};
+  list.forEach(function (r) { byNo[r[0]] = r; });
+  out.restrictions = ctx.restrictions.filter(function (r) { return r.date === date; }).map(function (r) {
+    var src = r.no ? byNo[r.no] : null;
+    return { name: r.name, school: r.school, reason: r.reason, absent: r.absent, memo: r.memo, cancelAt: r.cancelAt || '',
+      ban: r.ban || (src ? src[11] : ''), parent: src ? src[2] : '', phone: (src ? src[3] : '') || r.phone || '',
+      cls: src ? (src[X['수업반']] || src[X['접수명']]) : (r.cls || '') };
+  });
   out.cancelRule = cancelRule_();
   out.openRule = openRule_();
   out.marks = readTable_(SHEET.MARKS).rows.filter(function (r) { return r[0] === date; }).map(function (r) { return { kind: r[1], no: r[2], by: r[3] }; });

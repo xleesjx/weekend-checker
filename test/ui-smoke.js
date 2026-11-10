@@ -84,6 +84,8 @@ const server = http.createServer((req, res) => {
   await page.waitForSelector('details.rcard');
   const rtext = await page.textContent('details.rcard');
   if (!/신청 제한 2명/.test(rtext) || !/신청함 1명/.test(rtext) || !/정우진[^]*아직 신청 안 함/.test(rtext)) throw new Error('신청 제한 명단 카드: ' + rtext.slice(0, 160));
+  const rhead = await page.$$eval('details.rcard th', (t) => t.map((x) => x.textContent).join('|'));
+  if (rhead !== '학생명|학교|학반|신청자 (연락처)|사유 · 취소 시각|신청했던 반 (수업일)|이번 주 신청') throw new Error('신청 제한 명단 칸: ' + rhead);
   console.log('점검 목록 위 신청 제한 명단: 2명 · 신청함 1명(학생03) · 아직 신청 안 함 1명 확인');
   await page.screenshot({ path: path.join(OUT, '2-review.png'), fullPage: true });
   const memoBox = page.locator('[data-done="251210"]:visible').locator('xpath=..').locator('.memo');
