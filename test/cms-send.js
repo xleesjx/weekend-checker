@@ -68,7 +68,8 @@ const CLASSES = [
   { sn: '4790', title: files.basic.rows[0][1].trim(), date: '2026-11-07 ~ 2026-11-07', status: '접수중', rows: files.basic.rows },
   { sn: '4791', title: files.explore.rows[0][1].trim(), date: '2026-11-07 ~ 2026-11-07', status: '접수마감', rows: files.explore.rows },
   { sn: '4792', title: files.master.rows[0][1].trim(), date: '2026-11-07 ~ 2026-12-05', status: '접수중', rows: MASTER12 },
-  { sn: '4793', title: '[초2~3학년]11월14일 주말SW교실 기초코딩 오전반', date: '2026-11-14 ~ 2026-11-14', status: '접수중', rows: [] }
+  { sn: '4793', title: '[초2~3학년]11월14일 주말SW교실 기초코딩 오전반', date: '2026-11-14 ~ 2026-11-14', status: '접수중', rows: [] },
+  { sn: '4794', title: '[초3~5학년]11월14일 주말SW교실 탐험코딩 오전반', date: '2026-11-14 ~ 2026-11-14', status: '접수대기', rows: [] }
 ];
 const listPage = '<!doctype html><meta charset="utf-8"><title>통합예약</title><table><thead><tr><th>순번</th><th>누리집명</th><th>예약구분</th><th>신청명</th><th>운영일시</th><th>신청현황</th><th>접수상태</th><th>콘텐츠관리</th><th>휴일관리</th><th>신청관리</th></tr></thead><tbody>' +
   CLASSES.map((c, i) => `<tr><td>${i + 1}</td><td>울산창의융합교육센터</td><td>교육</td><td><a href="#">${c.title}</a></td><td>${c.date}<br>09:20 ~ 12:20</td><td>${c.rows.length}명</td><td>${c.status}</td><td></td><td></td><td><button onclick="opViewApplyList('${c.sn}', '1010', '34')">신청 관리</button></td></tr>`).join('') +
@@ -115,8 +116,9 @@ const server = http.createServer((req, res) => {
   await cms.evaluate((u) => { window.__excelDownWebapp = u; }, APP);
   await cms.addScriptTag({ content: fs.readFileSync(DL, 'utf8') });
   await cms.waitForSelector('#excelDownPanel');
-  const checked = await cms.$$eval('#excelDownPanel .xd-chk', (cs) => cs.map((c) => c.checked));
-  if (checked.join() !== 'true,true,true,false') throw new Error('기본 체크가 다름: ' + checked);
+  const checked = await cms.$$eval('#excelDownPanel .xd-chk', (cs) => cs.map((c) => c.checked + (c.disabled ? '(잠김)' : '')));
+  if (checked.join() !== 'true,true,true,false,false(잠김)') throw new Error('기본 체크가 다름: ' + checked);
+  if (!(await cms.textContent('#excelDownPanel')).includes('접수대기 수업 1개')) throw new Error('접수대기 안내 없음');
   const sendLabel = await cms.textContent('#excelDownPanel .xd-primary');
   if (!/3개 점검 웹앱으로 보내기/.test(sendLabel)) throw new Error('보내기 버튼: ' + sendLabel);
   await cms.screenshot({ path: path.join(OUT, '1-panel.png') });
