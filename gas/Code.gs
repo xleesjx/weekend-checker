@@ -7,12 +7,15 @@
 
 var TZ = 'Asia/Seoul';
 var SHEET = {
-  LIST: '통합명단', SUMMARY: '점검현황', STATUS: '처리기록', UPLOADS: '업로드기록', RESTRICT: '신청제한',
+  LIST: '통합명단', STATUS: '처리기록', UPLOADS: '업로드기록', RESTRICT: '신청제한',
   DATES: '설정_수업일', CLASSES: '설정_반', SCHOOLS: '설정_학교', MAP: '예약명연결', USERS: '점검자',
   LINKS: '같은반요청', ABS: '결석기록', ATT: '출석부', SETLOG: '설정변경기록', WAIT: '대기자연락', MARKS: '확인표시'
 };
 var TOPIC_SHEET_DEFAULT = '165RlpeCfhR9Z4n_Qq2IoPMTXBlkSiUWZMyBBhO77MBw';
 var TOPIC_TAB_DEFAULT = '하반기';
+// 점검결과·처리상태·처리자·처리시각·메모 열은 예전에 시트에서 보라고 쓰던 칸입니다. 열 순서를 지키려고 남겨 두고 비워 둡니다
+// (점검 결과는 웹앱이 계산하고, 처리 기록은 「처리기록」 탭에 있습니다)
+var VIEW_COLS = ['점검결과', '처리상태', '처리자', '처리시각', '메모'];
 // 신청일시·취소시각: 엑셀에는 없고 관리자 화면에만 있는 값 (즐겨찾기 버튼이 화면에서 읽어 함께 보냄)
 var EXTRA = ['수업일', '시간대', '수업반', '접수명', '점검결과', '처리상태', '처리자', '처리시각', '메모', '업로드시각', '업로더', '파일명', '순번', '처음 올라온 시각', '신청일시', '취소시각'];
 var LIST_HEADER, X, HEADERS;
@@ -25,7 +28,6 @@ function init_() {
   EXTRA.forEach(function (h, i) { X[h] = Core.HEADER.length + i; });
   HEADERS = {};
   HEADERS[SHEET.LIST] = LIST_HEADER;
-  HEADERS[SHEET.SUMMARY] = ['수업일', '시간대', '수업반', '접수명', '인원', '정원', '취소대상 미처리', '확인필요 미처리', '처리 완료', '최종 업로드', '업로더'];
   HEADERS[SHEET.STATUS] = ['수업일', '신청일련번호', '상태', '처리자', '처리시각', '메모', '지문'];
   HEADERS[SHEET.UPLOADS] = ['업로드시각', '업로더', '파일명', '파일시각', '수업일', '접수명', '인원', '결과'];
   HEADERS[SHEET.RESTRICT] = ['결석 수업일', '학생명', '학교', '사유', '제한 수업일(비우면 자동)', '메모', '등록자'];
@@ -198,7 +200,7 @@ function prefetchFor_(action) {
   var cfg = [SHEET.USERS, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.RESTRICT, SHEET.ABS];
   var map = {
     state: cfg.concat([SHEET.LIST, SHEET.STATUS, SHEET.UPLOADS, SHEET.ATT, SHEET.LINKS, SHEET.MARKS, SHEET.WAIT]),
-    status: cfg.concat([SHEET.LIST, SHEET.STATUS, SHEET.UPLOADS]),
+    status: cfg.concat([SHEET.LIST, SHEET.STATUS]),
     upload: cfg.concat([SHEET.LIST, SHEET.STATUS, SHEET.UPLOADS]),
     settings: cfg.concat([SHEET.SETLOG]),
     settingsSave: cfg
@@ -335,39 +337,6 @@ function readStatuses_() {
   return map;
 }
 
-function resultText_(e) {
-  if (e.cancelled) return '예약취소';
-  if (!e.issues.length) return '이상 없음';
-  var reds = e.issues.filter(function (i) { return i.level === 'red'; }).map(function (i) { return i.label; });
-  var ambers = e.issues.filter(function (i) { return i.level === 'amber'; }).map(function (i) { return i.label; });
-  return reds.length ? '취소대상: ' + uniq_(reds).join(', ') : '확인필요: ' + uniq_(ambers).join(', ');
-}
-
-function uniq_(a) { return a.filter(function (x, i) { return a.indexOf(x) === i; }); }
-
-/** 통합명단의 점검결과·처리 열과 점검현황 탭을 그 회차 기준으로 다시 씁니다. */
-function refreshSheetView_(ctx, date, list, statuses, uploads) {
-  var view = roundView_(ctx, date, list, statuses);
-  view.rows.forEach(function (e) {
-    var r = list[e.idx];
-    r[X['점검결과']] = resultText_(e);
-    r[X['처리상태']] = e.status ? (e.status.s === 'ok' ? '문제없음' : '완료') : (e.issues.length && !e.cancelled ? (e.changed ? '미처리(내용 변경)' : '미처리') : '');
-    r[X['처리자']] = e.status ? e.status.who : '';
-    r[X['처리시각']] = e.status ? e.status.at : '';
-    r[X['메모']] = e.status ? e.status.memo : '';
-  });
-  writeTable_(SHEET.LIST, list);
-  var summary = view.active.map(function (c) {
-    var mine = view.rows.filter(function (e) { return e.cls && e.cls['접수명'] === c['접수명']; });
-    var live = mine.filter(function (e) { return !e.cancelled; });
-    var open = function (lv) { return live.filter(function (e) { return e.level === lv && !e.status; }).length; };
-    var last = lastUpload_(uploads, date, c['접수명']);
-    return [date, c['시간대'], c['수업반'], c['접수명'], live.length, c.cap, open('red'), open('amber'),
-      live.filter(function (e) { return e.status; }).length, last ? last[0] : '', last ? last[1] : ''];
-  });
-  writeTable_(SHEET.SUMMARY, summary);
-}
-
 function lastUpload_(uploads, date, name) {
   var hit = null;
   uploads.forEach(function (u) {
@@ -400,11 +369,11 @@ API.rev = function () {
 API.state = function (req, user) {
   var rev0 = API.rev().rev, key = 'S:' + (req.date || '') + ':' + rev0 + ':' + cacheGen_() + ':' + today_();
   var hit = stateCacheGet_(key);
-  if (hit) { hit.user = user; return hit; }
+  if (hit) { hit.user = user; return applyChecked_(hit, hit.date); }
   prefetch_(prefetchFor_('state'));
   var res = stateBuild_(req, user);
   if (API.rev().rev === rev0) stateCachePut_(key, res);
-  return res;
+  return applyChecked_(res, res.date);
 };
 
 function stateCacheGet_(key) {
@@ -748,6 +717,7 @@ API.upload = function (req, user) {
     var uploads = readTable_(SHEET.UPLOADS).rows;
     var results = [], needMap = [], logs = [];
     var extras = cleanExtras_(req.extras);
+    var seen = readChecked_(), seenDirty = false;
 
     var files = (req.files || []).slice().sort(function (a, b) { return a.fileTs < b.fileTs ? -1 : 1; });
     var checked = files.map(function (f) {
@@ -781,7 +751,10 @@ API.upload = function (req, user) {
       }
       var prev = null;
       uploads.forEach(function (u) { if (u[4] === inst && u[5] === cls['접수명'] && /^반영/.test(u[7]) && (!prev || u[3] > prev[3])) prev = u; });
-      if (prev && meta.ts <= prev[3]) { res.result = '건너뜀'; res.detail = '이미 더 최근 명단(' + prev[3].slice(11, 16) + ' 받은 파일)이 올라가 있음'; return; }
+      var chk = seen[inst + '|' + cls['접수명']];
+      var newest = prev ? prev[3] : '';
+      if (chk && chk.ts > newest) newest = chk.ts;
+      if (newest && meta.ts <= newest) { res.result = '건너뜀'; res.detail = '이미 더 최근 명단(' + newest.slice(11, 16) + ' 받은 파일)이 올라가 있음'; return; }
 
       var seenBefore = {}, known = {};
       list.forEach(function (r) {
@@ -789,7 +762,8 @@ API.upload = function (req, user) {
         seenBefore[r[0]] = r[X['처음 올라온 시각']] || r[X['업로드시각']];
         known[r[0]] = { a: r[X['신청일시']] || '', c: r[X['취소시각']] || '' };
       });
-      list = list.filter(function (r) { return !(r[X['수업일']] === inst && r[X['접수명']] === cls['접수명']); });
+      var mine = list.filter(function (r) { return r[X['수업일']] === inst && r[X['접수명']] === cls['접수명']; });
+      var fresh = [];
       f.rows.forEach(function (cells, i) {
         var r = [];
         for (var k = 0; k < Core.HEADER.length; k++) r.push(Core.str(cells[k]));
@@ -801,8 +775,17 @@ API.upload = function (req, user) {
         r[X['신청일시']] = ex.a || old.a || '';
         r[X['취소시각']] = r[12] === '예약취소' ? (ex.c || old.c || '') : '';
         for (var j = 0; j < LIST_HEADER.length; j++) if (r[j] === undefined) r[j] = '';
-        list.push(r);
+        fresh.push(r);
       });
+      if (mine.length && sameRows_(mine, fresh)) {
+        // 바뀐 게 없으면 명단·업로드기록을 쓰지 않고 「바뀐 것 없음」 신호도 올리지 않습니다 (다른 선생님의 빠른 보기가 그대로 유지됨)
+        seen[inst + '|' + cls['접수명']] = { at: at, by: user.name, ts: meta.ts };
+        seenDirty = true;
+        res.result = '변동 없음'; res.cls = cls['접수명'];
+        res.detail = '지난번과 같음 · ' + meta.ts.slice(11, 16) + ' 받은 파일';
+        return;
+      }
+      list = list.filter(function (r) { return !(r[X['수업일']] === inst && r[X['접수명']] === cls['접수명']); }).concat(fresh);
       res.result = '반영'; res.cls = cls['접수명']; res.count = f.rows.length;
       res.detail = f.rows.length + '명 · ' + meta.ts.slice(11, 16) + ' 받은 파일';
       if (p.grade && cls.range && (p.grade.min !== cls.range.min || p.grade.max !== cls.range.max)) {
@@ -811,15 +794,53 @@ API.upload = function (req, user) {
       logs.push([at, user.name, f.fileName, meta.ts, inst, cls['접수명'], String(f.rows.length), '반영']);
     });
 
+    if (seenDirty) saveChecked_(seen, date);
     if (logs.length) {
       appendRows_(SHEET.UPLOADS, logs);
-      uploads = uploads.concat(logs);
-      refreshSheetView_(ctx, date, list, readStatuses_(), uploads);
+      // 예전에 시트 보기용으로 쓰던 점검결과·처리 칸은 비워 둡니다
+      list.forEach(function (r) { VIEW_COLS.forEach(function (h) { r[X[h]] = ''; }); });
+      writeTable_(SHEET.LIST, list);
       bumpRev_();
     }
     return { results: results, needMap: needMap };
   });
 };
+
+/** 같은 반 명단이 지난번과 똑같은지 (순서·엑셀 칸·신청일시·취소시각) */
+function sameRows_(a, b) {
+  if (a.length !== b.length) return false;
+  var cols = [];
+  for (var k = 0; k < Core.HEADER.length; k++) cols.push(k);
+  cols.push(X['신청일시'], X['취소시각']);
+  for (var i = 0; i < a.length; i++) {
+    for (var c = 0; c < cols.length; c++) if (Core.str(a[i][cols[c]]) !== Core.str(b[i][cols[c]])) return false;
+  }
+  return true;
+}
+
+/** 바뀐 게 없어 기록하지 않은 명단의 마지막 확인 시각 (수업일|접수명 → {at, by, ts}) — 스크립트 속성에 둡니다 */
+function readChecked_() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('CHECKED') || '{}') || {}; } catch (e) { return {}; }
+}
+
+function saveChecked_(map, date) {
+  var keep = {}, from = Core.addDays(date, -70);
+  Object.keys(map).forEach(function (k) { if (k.slice(0, 10) >= from) keep[k] = map[k]; });
+  PropertiesService.getScriptProperties().setProperty('CHECKED', JSON.stringify(keep));
+}
+
+/** 반별 「최종 업로드」를 마지막 확인 시각으로 맞춥니다 (기억해 둔 화면에도 바로 반영) */
+function applyChecked_(res, date) {
+  var map = readChecked_();
+  (res.classes || []).forEach(function (c) {
+    Object.keys(map).forEach(function (k) {
+      var bar = k.indexOf('|');
+      if (k.slice(bar + 1) !== c['접수명'] || !Core.instanceCovers(k.slice(0, bar), date)) return;
+      if (map[k].at > (c.lastAt || '')) { c.lastAt = map[k].at; c.lastBy = map[k].by; }
+    });
+  });
+  return res;
+}
 
 function sameHeader_(h) {
   if (!h || h.length < Core.HEADER.length) return false;
@@ -849,8 +870,6 @@ API.status = function (req, user) {
       rows.push([date, req.no, req.status, user.name, at, Core.str(req.memo), target.fp]);
     }
     writeTable_(SHEET.STATUS, rows);
-    var statuses2 = readStatuses_();
-    refreshSheetView_(ctx, date, list, statuses2, readTable_(SHEET.UPLOADS).rows);
     return { status: req.status ? { s: req.status, who: user.name, at: at, memo: Core.str(req.memo) } : null, fp: target.fp, rev: bumpRev_() };
   });
 };
@@ -1033,7 +1052,7 @@ function menuImportSchools() {
 function setupSheets() {
   init_();
   var ss = ss_();
-  [SHEET.LIST, SHEET.SUMMARY, SHEET.STATUS, SHEET.UPLOADS, SHEET.RESTRICT, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.USERS, SHEET.LINKS, SHEET.ABS, SHEET.ATT, SHEET.SETLOG, SHEET.WAIT, SHEET.MARKS]
+  [SHEET.LIST, SHEET.STATUS, SHEET.UPLOADS, SHEET.RESTRICT, SHEET.DATES, SHEET.CLASSES, SHEET.SCHOOLS, SHEET.MAP, SHEET.USERS, SHEET.LINKS, SHEET.ABS, SHEET.ATT, SHEET.SETLOG, SHEET.WAIT, SHEET.MARKS]
     .forEach(function (n) { sheet_(n); });
 
   if (!readTable_(SHEET.USERS).rows.length) {
@@ -1065,16 +1084,8 @@ function setupSheets() {
   list.setFrozenRows(1);
   Core.HIDDEN_COLS.forEach(function (c) { list.setColumnWidth(c + 1, 24); });
   list.setColumnWidth(2, 220);
-  list.setColumnWidth(X['점검결과'] + 1, 260);
-  var col = X['점검결과'] + 1;
-  var rng = list.getRange(2, col, Math.max(list.getMaxRows() - 1, 1), 1);
-  var rules = [
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('취소대상').setBackground('#FDE2DE').setFontColor('#B42318').setRanges([rng]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('확인필요').setBackground('#FEF0C7').setFontColor('#7A2E0E').setRanges([rng]).build()
-  ];
-  list.setConditionalFormatRules(rules);
   // 웹앱이 쓰는 탭은 편집 시 경고
-  [SHEET.LIST, SHEET.SUMMARY, SHEET.STATUS, SHEET.UPLOADS].forEach(function (n) {
+  [SHEET.LIST, SHEET.STATUS, SHEET.UPLOADS].forEach(function (n) {
     var sh = sheet_(n);
     if (!sh.getProtections(SpreadsheetApp.ProtectionType.SHEET).length) sh.protect().setWarningOnly(true).setDescription('웹앱이 자동으로 채우는 탭입니다');
   });

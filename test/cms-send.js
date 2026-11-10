@@ -161,7 +161,8 @@ const server = http.createServer((req, res) => {
   await app.screenshot({ path: path.join(OUT, '3b-full-cancel.png'), fullPage: false });
   // 폴더 업로드처럼 화면 값 없이 다시 올려도 이미 아는 값은 유지
   const env2res = env.call('upload', { date: '2026-11-07', files: [require('./fake-data').parseXls(toXls(files.explore.rows), '통합예약신청자목록 - 2026-11-06T160000.000.xls')] });
-  if (env2res.results[0].result !== '반영') throw new Error('다시 올리기: ' + JSON.stringify(env2res.results));
+  // 같은 명단이라 쓰지 않음 (변동 없음) — 그래도 알던 취소 시각은 그대로
+  if (env2res.results[0].result !== '변동 없음') throw new Error('다시 올리기: ' + JSON.stringify(env2res.results));
   if (!env.call('state', { date: '2026-11-07' }).rows.some((r) => r.cancelAt === CANCEL_AT && r.cells[12] === '예약취소')) throw new Error('화면 값 없이 다시 올렸더니 취소 시각이 사라짐');
   // 기한 후 취소 자동 후보 (기본: 수업 전날 18:00 이후 → 11/6 19:16 취소 2명)
   await app.click('[data-act=refresh]');

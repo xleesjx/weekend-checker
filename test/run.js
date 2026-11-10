@@ -134,8 +134,10 @@ let st2 = env.call('status', { date: '2026-11-07', no: '251210', status: 'ok', m
 ok(st2.ok && st2.conflict && /이승주/.test(st2.message), '동시 처리 충돌 감지');
 res = env.call('state', { date: '2026-11-07' });
 ok(row('251210').status && row('251210').status.memo === '통화 완료', '처리 상태 유지');
-const summary = env.table('점검현황');
-ok(summary.length > 1 && summary[0][0] === '수업일', '점검현황 탭');
+// [완료]는 처리기록 한 줄만 씀: 통합명단의 예전 보기용 칸(점검결과~메모)은 비어 있고 점검현황 탭도 없음
+const VIEW = env.table('통합명단')[0].indexOf('점검결과');
+ok(VIEW > 0 && env.table('통합명단').slice(1).every((r) => r.slice(VIEW, VIEW + 5).every((v) => v === '')), '[완료]가 통합명단을 다시 쓰지 않음');
+ok(!env.ctx.SpreadsheetApp.getActiveSpreadsheet().getSheetByName('점검현황'), '점검현황 탭 안 만듦');
 
 // 신청자가 내용을 고치면 다시 미처리
 const fixed = JSON.parse(JSON.stringify(files.explore));
@@ -144,6 +146,23 @@ fixed.rows[2][2] = '한엄마';
 env.setNow(new Date('2026-11-04T10:30:00+09:00'));
 res = env.call('upload', { date: '2026-11-07', files: [load(fixed)] });
 ok(res.results[0].result === '반영', '탐험 새 명단 반영');
+// 바뀐 게 없는 명단을 다시 보내면: 명단·업로드기록을 쓰지 않고, 「바뀜」 신호도 그대로, 최종 업로드 시각만 새로
+const same = JSON.parse(JSON.stringify(fixed));
+same.name = '통합예약신청자목록 - 2026-11-04T091500.000.xls';
+const upN = env.table('업로드기록').length, rev0 = env.props.REV;
+env.setNow(new Date('2026-11-04T10:35:00+09:00'));
+res = env.call('upload', { date: '2026-11-07', files: [load(same)] });
+ok(res.results[0].result === '변동 없음', '같은 명단은 변동 없음: ' + res.results[0].result);
+ok(env.table('업로드기록').length === upN && env.props.REV === rev0, '변동 없으면 기록·신호 그대로');
+res = env.call('state', { date: '2026-11-07' });
+const tamClass = res.classes.find((c) => c['접수명'] === same.rows[0][1].replace(/^.*주말\s*/, '')) || res.classes.find((c) => /탐험/.test(c['접수명']));
+ok(tamClass && tamClass.lastAt.slice(11, 16) === '10:35', '최종 업로드는 마지막 확인 시각: ' + (tamClass && tamClass.lastAt));
+// 확인한 것보다 오래된 파일은 건너뜀
+const older = JSON.parse(JSON.stringify(fixed));
+older.name = '통합예약신청자목록 - 2026-11-04T091000.000.xls';
+older.rows[0][2] = '옛이름';
+res = env.call('upload', { date: '2026-11-07', files: [load(older)] });
+ok(res.results[0].result === '건너뜀', '마지막 확인보다 오래된 파일은 건너뜀');
 res = env.call('state', { date: '2026-11-07' });
 ok(!row('251210').issues.length && !row('251210').status, '학부모 이름으로 고치면 문제 없어짐');
 ok(!row('251204').isNew && !row('251188').isNew, '이전부터 있던 신청은 새로 들어옴 아님');
