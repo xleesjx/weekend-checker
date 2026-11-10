@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '37';
+  var APP_VERSION = '38';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -437,12 +437,12 @@
       VIEWS.map(function (v) {
         var n = v[0] === 'review' && (counts.red + counts.amber) ? ' (' + (counts.red + counts.amber) + ')' : '';
         return '<button data-view="' + v[0] + '" class="' + (S.view === v[0] ? 'on' : '') + '">' + v[1] + n + '</button>';
-      }).join('') + '</nav><div class="top-right"><span class="muted small">' + (S.loadedAt ? S.loadedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 기준' : '') + '</span>' +
+      }).join('') + '</nav>' + (S.date ? '<span class="hbreak" aria-hidden="true"></span><div class="ctx-head">' + ctxHtml() + '</div>' : '') + '<div class="top-right"><span class="muted small">' + (S.loadedAt ? S.loadedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 기준' : '') + '</span>' +
       '<button class="btn sm" data-act="cms" title="통합예약 관리자 화면을 새 창으로 엽니다. 이미 열려 있으면 그 창으로 갑니다. 이렇게 연 창의 즐겨찾기 버튼은 이 웹앱 창으로 명단을 바로 보냅니다.">통합예약 관리자 ↗</button>' +
       '<button class="btn sm" data-act="refresh" title="서버에서 최신 명단·처리 상태·설정을 다시 불러옵니다">새로고침</button><button class="btn sm" data-act="guide">? 도움말</button>' +
       '<a href="' + esc(S.data.sheetUrl) + '" target="_blank" rel="noopener">구글 시트</a><span class="chip">' + esc((S.data.user && S.data.user.name) || '') + ' 선생님</span></div></div><div id="busy" class="' + (S.busy ? 'busy-bar' : '') + '"></div></header>';
     if (S.newVersion) html += '<div class="wrap"><div class="card pad row between" style="margin-top:12px;border-color:#BFD0F5;background:#F0F5FF"><span>웹앱 새 버전이 나왔습니다.</span><button class="btn sm primary" data-act="update">지금 적용</button></div></div>';
-    if (S.date) html += contextBar() + flowBar(counts);
+    if (S.date) html += '<div class="ctx-mob">' + ctxHtml() + '</div>' + flowBar(counts);
     html += '<main class="wrap">';
     if (!S.date) html += '<div class="card pad">설정_수업일 탭에 수업일이 없습니다. 구글 시트에서 수업일을 먼저 입력해 주세요.</div>';
     else if (S.view === 'home') html += viewHome(counts);
@@ -461,17 +461,14 @@
 
   /** 제목 아래 「작업 기준」: 운영 시기 › 회차. 모든 화면이 이 회차를 기준으로 동작 */
   function currentRoundDate() { return Core.currentRound(S.data.dates || [], (S.data.today || nowKst().slice(0, 10))); }
-  function contextBar() {
+  function ctxHtml() {
     var cur = currentRoundDate(), off = cur && S.date !== cur;
-    var sc = schedule();
-    return '<div class="wrap"><section class="ctxbar' + (off ? ' off' : '') + '" aria-label="작업 기준"><span class="ctx-term">📌 ' + esc(S.data.termName || '2026 하반기 주말') + ' ›</span>' + roundSelect() +
-      '<span class="small ctx-info">접수 ' + esc(dayText(sc.open.slice(0, 10)) + ' ' + sc.open.slice(11)) + ' ~ · 취소 기한 ' + esc(dayText(sc.deadline.slice(0, 10)) + ' ' + sc.deadline.slice(11)) + '</span>' +
-      (off ? '<b class="ctx-warn">⚠ ' + (S.date < cur ? '지난' : '다음') + ' 회차를 보고 있습니다</b><button class="btn sm primary" data-x="round-now">이번 회차로 (' + esc(Core.shortDate(cur)) + ')</button>' : '') +
-      tip('모든 화면(점검 목록·전체 명단·출석부·결석·안내줄)이 여기서 고른 회차를 기준으로 동작합니다. 오늘 날짜에 맞춰 자동으로 골라지고, 바꾸면 내 화면에만 적용됩니다.') + '</section></div>';
+    return '<div class="ctx' + (off ? ' off' : '') + '"><span class="ctx-term">📌 ' + esc(S.data.termName || '2026 하반기 주말') + ' ›</span>' + roundSelect() +
+      (off ? '<b class="ctx-warn">⚠ ' + (S.date < cur ? '지난' : '다음') + ' 회차</b><button class="btn sm primary" data-x="round-now">이번 회차로</button>' : '') + '</div>';
   }
 
   function roundSelect() {
-    return '<select id="round" aria-label="수업 회차" style="font-weight:700;font-size:16px">' + S.data.dates.map(function (d) {
+    return '<select class="round-sel" aria-label="수업 회차">' + S.data.dates.map(function (d) {
       return '<option value="' + esc(d.date) + '"' + (d.date === S.date ? ' selected' : '') + '>' + esc(d.n) + '회차 · ' + esc(Core.shortDate(d.date)) + (d.note ? ' · ' + esc(d.note) : '') + '</option>';
     }).join('') + '</select>';
   }
@@ -2305,7 +2302,7 @@
   });
 
   root.addEventListener('change', function (e) {
-    if (e.target.id === 'round') {
+    if (e.target.classList.contains('round-sel')) {
       if (S.att && S.att.mode === 'edit' && S.att.dirty && !confirm('출석부에 저장하지 않은 변경이 있습니다. 회차를 바꾸면 사라집니다. 바꿀까요?')) { e.target.value = S.date; return; }
       S.lastUpload = null; load(e.target.value);
     }
