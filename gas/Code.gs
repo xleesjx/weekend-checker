@@ -289,7 +289,7 @@ function loadCtx_() {
   // 결석 기록 중 출석 인정이 아닌 것은 다음 수업일 신청 제한
   readTable_(SHEET.ABS).rows.forEach(function (r) {
     if (!r[3] || r[12] === 'Y') return;
-    restrictions.push({ absent: r[1], name: Core.str(r[3]), school: Core.str(r[4]), reason: Core.str(r[9]) || '결석', date: Core.nextClassDate(dates, r[1]), memo: Core.str(r[11]) });
+    restrictions.push({ absent: r[1], name: Core.str(r[3]), school: Core.str(r[4]), reason: Core.str(r[9]) || '결석', date: Core.nextClassDate(dates, r[1]), memo: Core.str(r[11]), cancelAt: Core.str(r[10]) });
   });
   var mappings = {};
   readTable_(SHEET.MAP).rows.forEach(function (r) { if (r[0]) mappings[r[0]] = r[1]; });
@@ -462,7 +462,7 @@ function stateBuild_(req, user) {
   out.absences = readAbsences_().filter(function (a) { return a.date === date; });
   // 이번 회차 신청 제한 명단 (점검 목록 맨 위 카드)
   out.restrictions = ctx.restrictions.filter(function (r) { return r.date === date; })
-    .map(function (r) { return { name: r.name, school: r.school, reason: r.reason, absent: r.absent, memo: r.memo }; });
+    .map(function (r) { return { name: r.name, school: r.school, reason: r.reason, absent: r.absent, memo: r.memo, cancelAt: r.cancelAt || '' }; });
   out.cancelRule = cancelRule_();
   out.openRule = openRule_();
   out.marks = readTable_(SHEET.MARKS).rows.filter(function (r) { return r[0] === date; }).map(function (r) { return { kind: r[1], no: r[2], by: r[3] }; });

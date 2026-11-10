@@ -270,6 +270,14 @@ ok(tp.ok && tp.items.length === 1 && tp.items[0].cls === '기초1' && /로비코
   mk = env.call('state', { date: '2026-11-07' }).marks;
   ok(mk.length === 1 && mk[0].kind === 'keep', '제외 모두 되돌리기');
   ok(env.call('mark', { date: '2026-11-07', kind: 'zzz', no: '1', on: true }).code === 'BAD', '잘못된 표시 거부');
+  // 기한 후 취소로 신청 제한된 학생: 취소 시각이 신청 제한 명단과 점검 문구에 나옴
+  const ab = env.call('absSave', { rec: { date: '2026-10-31', name: '문서윤', school: '해솔초', ban: '3-2', reason: '기한 후 취소', cancelAt: '10/30 18:20' } });
+  const st7 = env.call('state', { date: '2026-11-07' });
+  const rsx = (st7.restrictions || []).find((x) => x.name === '문서윤');
+  ok(rsx && rsx.cancelAt === '10/30 18:20', '신청 제한 명단에 취소 시각');
+  const rowx = st7.rows.find((x) => x.cells[9] === '문서윤');
+  ok(rowx && rowx.issues.some((i) => i.code === 'RESTRICT' && /10\/30 18:20 취소/.test(i.detail)), '신청 제한 점검 문구에 취소 시각: ' + (rowx && rowx.issues.map((i) => i.detail).join(' / ')));
+  env.call('absDelete', { id: ab.id });
 })();
 
 console.log('테스트 ' + passed + '개 통과');

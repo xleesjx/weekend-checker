@@ -363,7 +363,7 @@ var Core = (function () {
         restrictions.forEach(function (rs) {
           if (!it.name || str(rs.name) !== it.name) return;
           var rel = sameSchool(rs.school, it.school || it.home, ctx.schools, memo);
-          var why = (rs.reason ? rs.reason + ' ' : '') + shortDate(rs.absent) + ' → ' + shortDate(date) + ' 신청 제한';
+          var why = (rs.reason ? rs.reason + (rs.cancelAt ? '(' + rs.cancelAt + ' 취소)' : '') + ' ' : '') + shortDate(rs.absent) + ' → ' + shortDate(date) + ' 신청 제한';
           if (rel === 'same') addIssue(issues, 'RESTRICT', why, [C['학생명']]);
           else if (rel === 'maybe') addIssue(issues, 'RESTRICT_MAYBE', '신청 제한 학생일 수 있음 — 학교 확인 (제한 명단: ' + rs.school + ' / 적힌 학교: ' + (it.school || it.home || '없음') + ') · ' + why, [C['학생명'], C['학교명']]);
         });

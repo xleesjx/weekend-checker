@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '34';
+  var APP_VERSION = '35';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -581,13 +581,14 @@
     return '<details class="card pad rcard"' + (open ? ' open' : '') + '><summary><b>🚫 이번 회차 신청 제한 ' + list.length + '명</b> <span class="small">(' + esc(md(S.date)) + ' 수업)' +
       (yes ? ' · <b style="color:var(--red)">신청함 ' + yes + '명</b>' : '') + (maybe ? ' · <b style="color:var(--amber)">학교 확인 ' + maybe + '명</b>' : '') + '</span> ' +
       tip('지난 회차 결석 기록 중 출석 인정이 아닌 학생과, 설정의 신청제한 명단에 적은 학생입니다. 학생명이 같고 정식 학교 이름이 같으면 「신청함」, 학교를 정할 수 없으면 「학교 확인」입니다. 잘못 제한된 학생은 결석 메뉴에서 그 회차로 가서 「출석 인정」에 체크하면 빠집니다.') + '</summary>' +
-      '<div class="tbox" style="margin-top:8px"><table class="grid"><thead><tr><th>학생명</th><th>학교 (제한 명단)</th><th>사유</th><th>결석일</th><th>이번 주 신청</th></tr></thead><tbody>' + list.map(function (x) {
+      '<div class="tbox" style="margin-top:8px"><table class="grid"><thead><tr><th>학생명</th><th>학교 (제한 명단)</th><th>사유 · 취소 시각</th><th>결석일</th><th>이번 주 신청</th></tr></thead><tbody>' + list.map(function (x) {
         var rs = x.rs, h = x.hits.filter(function (y) { return !y.row.cancelled; });
         var cell = x.state === 'no' ? '<span class="muted">아직 신청 안 함</span>' : h.map(function (y) {
           return '<div><b style="color:' + (y.rel === 'same' ? 'var(--red)' : 'var(--amber)') + '">⚠ ' + (y.rel === 'same' ? '신청함' : '신청했을 수 있음 · 학교 확인') + '</b> ' +
             esc(y.row.cls) + ' · ' + esc(y.row.cells[12]) + (y.rel === 'same' ? '' : ' · 적힌 학교 「' + esc(y.row.cells[10]) + '」') + ' <button class="btn sm" data-x="r-find" data-name="' + esc(rs.name) + '">보기</button></div>';
         }).join('');
-        return '<tr class="' + (x.state === 'no' ? 'muted' : '') + '"><td><b>' + esc(rs.name) + '</b></td><td>' + esc(rs.school) + '</td><td>' + esc(rs.reason || '') + (rs.memo ? ' <span class="muted small">' + esc(rs.memo) + '</span>' : '') + '</td><td>' + esc(Core.shortDate(rs.absent) || '') + '</td><td>' + cell + '</td></tr>';
+        return '<tr class="' + (x.state === 'no' ? 'muted' : '') + '"><td><b>' + esc(rs.name) + '</b></td><td>' + esc(rs.school) + '</td><td>' + esc(rs.reason || '') +
+          (rs.cancelAt ? ' <b style="color:var(--red);white-space:nowrap">' + esc(rs.cancelAt) + ' 취소</b>' : '') + (rs.memo ? ' <span class="muted small">' + esc(rs.memo) + '</span>' : '') + '</td><td>' + esc(Core.shortDate(rs.absent) || '') + '</td><td>' + cell + '</td></tr>';
       }).join('') + '</tbody></table></div></details>';
   }
 
