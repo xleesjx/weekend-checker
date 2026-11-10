@@ -473,6 +473,7 @@ function stateBuild_(req, user) {
   });
   out.cancelRule = cancelRule_();
   out.openRule = openRule_();
+  out.termName = PropertiesService.getScriptProperties().getProperty('TERM_NAME') || '2026 하반기 주말';
   out.marks = readTable_(SHEET.MARKS).rows.filter(function (r) { return r[0] === date; }).map(function (r) { return { kind: r[1], no: r[2], by: r[3] }; });
   out.waitLogs = readTable_(SHEET.WAIT).rows.filter(function (r) { return r[0] === date; }).map(function (r) { return { no: r[1], result: r[2], memo: r[3], by: r[4], at: r[5] }; });
   out.rooms = rooms_();
@@ -607,6 +608,17 @@ API.mark = function (req, user) {
     if (req.on) rows.push([req.date, req.kind, no, user.name, now_()]);
     writeTable_(SHEET.MARKS, rows);
     return { rev: bumpRev_() };
+  });
+};
+
+/** 운영 시기 이름 (맨 위 작업 기준 줄) */
+API.termName = function (req, user) {
+  var name = Core.str(req.name).slice(0, 30);
+  if (!name) throw apiError_('BAD', '이름을 적어 주세요.');
+  return withLock_(function () {
+    PropertiesService.getScriptProperties().setProperty('TERM_NAME', name);
+    appendRows_(SHEET.SETLOG, [[now_(), user.name, '운영 시기 이름', name]]);
+    return { name: name, rev: bumpRev_() };
   });
 };
 

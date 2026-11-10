@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '36';
+  var APP_VERSION = '37';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -249,7 +249,8 @@
    * 주고받는 신호: xd-hello → wc-ready / xd-files → wc-received → (사용자 확인) → wc-done 또는 wc-cancel
    */
   var CMS_ORIGIN = CFG.CMS_ORIGIN || 'https://cms.use.go.kr';
-  var CMS_LIST_URL = CMS_ORIGIN + '/intra/reservation/BD_selectReservationMngList.do';
+  // 창의융합교육센터(누리집 34) 통합예약 목록이 바로 나오는 주소
+  var CMS_LIST_URL = CMS_ORIGIN + '/intra/reservation/BD_selectReservationMngList.do?q_rsvtRegSn=&q_rType=&q_searchSiteSn=34&q_rsvtSeCdId=&q_searchSttsSn=&q_searchAplyBgngYmd=&q_searchAplyEndYmd=&q_searchVal=&q_rowPerPage=10&q_currPage=1&q_sortName=&q_sortOrder=';
   // 창 이름: 관리자 화면의 즐겨찾기 버튼이 이 이름으로 이 창을 찾습니다 (새로 열거나 새로고침하지 않도록)
   try { if (window.name !== 'weekendChecker') window.name = 'weekendChecker'; } catch (e) { /* 무시 */ }
 
@@ -441,7 +442,7 @@
       '<button class="btn sm" data-act="refresh" title="서버에서 최신 명단·처리 상태·설정을 다시 불러옵니다">새로고침</button><button class="btn sm" data-act="guide">? 도움말</button>' +
       '<a href="' + esc(S.data.sheetUrl) + '" target="_blank" rel="noopener">구글 시트</a><span class="chip">' + esc((S.data.user && S.data.user.name) || '') + ' 선생님</span></div></div><div id="busy" class="' + (S.busy ? 'busy-bar' : '') + '"></div></header>';
     if (S.newVersion) html += '<div class="wrap"><div class="card pad row between" style="margin-top:12px;border-color:#BFD0F5;background:#F0F5FF"><span>웹앱 새 버전이 나왔습니다.</span><button class="btn sm primary" data-act="update">지금 적용</button></div></div>';
-    if (S.date) html += flowBar(counts);
+    if (S.date) html += contextBar() + flowBar(counts);
     html += '<main class="wrap">';
     if (!S.date) html += '<div class="card pad">설정_수업일 탭에 수업일이 없습니다. 구글 시트에서 수업일을 먼저 입력해 주세요.</div>';
     else if (S.view === 'home') html += viewHome(counts);
@@ -458,6 +459,17 @@
     window.scrollTo(0, y);
   }
 
+  /** 제목 아래 「작업 기준」: 운영 시기 › 회차. 모든 화면이 이 회차를 기준으로 동작 */
+  function currentRoundDate() { return Core.currentRound(S.data.dates || [], (S.data.today || nowKst().slice(0, 10))); }
+  function contextBar() {
+    var cur = currentRoundDate(), off = cur && S.date !== cur;
+    var sc = schedule();
+    return '<div class="wrap"><section class="ctxbar' + (off ? ' off' : '') + '" aria-label="작업 기준"><span class="ctx-term">📌 ' + esc(S.data.termName || '2026 하반기 주말') + ' ›</span>' + roundSelect() +
+      '<span class="small ctx-info">접수 ' + esc(dayText(sc.open.slice(0, 10)) + ' ' + sc.open.slice(11)) + ' ~ · 취소 기한 ' + esc(dayText(sc.deadline.slice(0, 10)) + ' ' + sc.deadline.slice(11)) + '</span>' +
+      (off ? '<b class="ctx-warn">⚠ ' + (S.date < cur ? '지난' : '다음') + ' 회차를 보고 있습니다</b><button class="btn sm primary" data-x="round-now">이번 회차로 (' + esc(Core.shortDate(cur)) + ')</button>' : '') +
+      tip('모든 화면(점검 목록·전체 명단·출석부·결석·안내줄)이 여기서 고른 회차를 기준으로 동작합니다. 오늘 날짜에 맞춰 자동으로 골라지고, 바꾸면 내 화면에만 적용됩니다.') + '</section></div>';
+  }
+
   function roundSelect() {
     return '<select id="round" aria-label="수업 회차" style="font-weight:700;font-size:16px">' + S.data.dates.map(function (d) {
       return '<option value="' + esc(d.date) + '"' + (d.date === S.date ? ' selected' : '') + '>' + esc(d.n) + '회차 · ' + esc(Core.shortDate(d.date)) + (d.note ? ' · ' + esc(d.note) : '') + '</option>';
@@ -467,8 +479,7 @@
   function viewHome(counts) {
     var from = Core.addDays(S.date, -Core.WINDOW_DAYS);
     var html = '<section class="card pad row between"><div style="display:flex;flex-direction:column;gap:6px">' +
-      '<div class="row">' + roundSelect() + tip('점검할 수업일입니다. 오늘 날짜에 맞춰 자동으로 골라지고, 다른 회차로 바꿀 수 있습니다.') + '</div>' +
-      '<span class="muted small">접수 기간 ' + Core.shortDate(from) + ' ~ ' + Core.shortDate(S.date) + ' · 이 기간에 받은 파일만 올라갑니다</span></div>' +
+      '<b>명단 올리기</b><span class="muted small">' + esc(Core.shortDate(from)) + ' ~ ' + esc(Core.shortDate(S.date)) + '에 받은 파일만 올라갑니다 · 즐겨찾기 버튼으로 보내면 폴더 없이 바로 올라옵니다</span></div>' +
       '<div class="row"><button class="btn" data-act="folder">폴더 변경</button>' + tip('통합예약 엑셀이 저장되는 폴더를 지정합니다. 크롬은 다운로드 폴더 자체는 열지 못하게 막으므로, 다운로드 폴더 안에 「주말명단」 같은 하위 폴더를 만들어 지정하세요. 계정과 PC마다 한 번만 지정하면 기억합니다.') +
       '<button class="btn primary" data-act="upload">명단 올리기</button>' + tip('지정한 폴더에서 이번 접수 기간에 받은 「통합예약신청자목록」 파일 중 아직 안 올린 것만 골라 올립니다. 같은 반 파일이 여러 개면 가장 최근 파일만 반영합니다.') + '</div>' +
       '<div class="drop" id="drop" style="flex-basis:100%">' + (window.showDirectoryPicker ? '크롬·엣지가 아니라면 여기에 엑셀 파일을 끌어다 놓으세요' : '이 기기에서는 폴더 지정이 안 되어 [명단 올리기]를 누르면 파일을 직접 고릅니다 (명단 올리기는 PC를 권장합니다)') + '</div></section>';
@@ -614,7 +625,7 @@
       ['amber', '확인 필요 · 미처리', '입력 내용 오류 · 학부모 연락처 필요 — 보호자에게 연락해 확인한 뒤 <b>통합예약시스템 관리자 페이지에서 원본 수정</b> (다음 명단부터 다시 걸리지 않습니다)', openRows('amber')],
       ['done', '처리 완료 · 문제없음', '최근 처리한 것이 위 · 잘못 누른 것은 되돌리기', doneRows()]
     ];
-    var html = restrictCard() + '<section class="card pad row between"><div class="row">' + roundSelect() + colsToolbar() + '</div>' +
+    var html = restrictCard() + '<section class="card pad row between"><div class="row">' + colsToolbar() + '</div>' +
       '<span class="muted small">열 순서는 엑셀 원본과 같습니다 ' + tip('완료: 연락·취소 등 조치를 함 / 문제없음: 확인해 보니 정상. 처리한 항목은 아래 「처리 완료」로 내려갑니다. 신청 내용이 나중에 바뀌면 다시 미처리로 올라옵니다.') + '</span></section>';
     sections.forEach(function (s) {
       html += '<section class="card" style="overflow:hidden"><div class="sec-head ' + s[0] + '"><span class="badge ' + s[0] + '">' + s[1] + ' ' + s[3].length + '건</span><span class="small">' + s[2] + '</span></div>';
@@ -740,7 +751,7 @@
   }
 
   function viewFull() {
-    return '<section class="card pad row between"><div class="row">' + roundSelect() +
+    return '<section class="card pad row between"><div class="row">' +
       '<input type="search" id="q" value="' + esc(S.query) + '" placeholder="학생명 · 신청자명 · 연락처" aria-label="검색" style="width:220px">' + colsToolbar() + '</div>' +
       '<div class="row small muted"><span class="badge" style="background:var(--red-bg);color:var(--red)">취소 대상</span><span class="badge" style="background:var(--amber-bg);color:var(--amber)">확인 필요</span><span class="badge" style="background:var(--red-cell);color:#fff">문제 칸</span>' + tip('열 제목을 누르면 반 안에서 정렬됩니다 (오름차순 → 내림차순 → 원래 엑셀 순서). 학교명은 앞 두 글자, 학반은 학년 숫자 기준입니다. 아래 버튼으로 원하는 신청만 골라 볼 수 있고, 같은 줄의 버튼은 하나라도 맞으면 보입니다.') + '</div>' +
       '<div id="fbar" style="flex-basis:100%">' + filterBar() + '</div>' +
@@ -767,7 +778,7 @@
 
   function viewUploads() {
     var list = S.data.uploads || [];
-    return '<section class="card pad row">' + roundSelect() + '<span class="muted small">이 회차와 접수 기간에 올린 기록</span></section><section class="card" style="overflow:hidden"><div class="tbox"><table class="grid"><thead><tr><th>올린 시각</th><th>올린 사람</th><th>접수명</th><th>인원</th><th>파일</th><th>파일 받은 시각</th></tr></thead><tbody>' +
+    return '<section class="card pad row"><span class="muted small">이 회차와 접수 기간에 올린 기록</span></section><section class="card" style="overflow:hidden"><div class="tbox"><table class="grid"><thead><tr><th>올린 시각</th><th>올린 사람</th><th>접수명</th><th>인원</th><th>파일</th><th>파일 받은 시각</th></tr></thead><tbody>' +
       (list.length ? list.map(function (u) {
         return '<tr><td>' + esc(u.at) + '</td><td>' + esc(u.by) + '</td><td>' + esc(u.name) + '</td><td>' + esc(u.count) + '</td><td>' + esc(u.file) + '</td><td>' + esc(u.fileTs.replace('T', ' ').slice(0, 16)) + '</td></tr>';
       }).join('') : '<tr><td colspan="6" class="muted">기록이 없습니다.</td></tr>') + '</tbody></table></div></section>';
@@ -861,6 +872,10 @@
     var r = s.cancelRule || cancelRule();
     var html = '<section class="card pad row between"><div><b>설정</b><div class="muted small">고친 뒤 표마다 [저장]을 누르면 점검자 모두에게 바로 적용됩니다. 바꾼 기록은 맨 아래에 남습니다.</div></div>' +
       '<div class="row"><a class="btn sm" href="' + esc(s.sheetUrl) + '" target="_blank" rel="noopener">구글 시트 열기</a><button class="btn sm" data-act="reload-settings">새로고침</button></div></section>';
+    // 운영 시기 이름
+    html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><h2 style="margin:0">운영 시기 이름</h2>' +
+      '<p class="muted small" style="margin:0">맨 위 「작업 기준」 줄 앞에 나오는 이름입니다. (나중에 방학 프로그램이 생기면 여기서 시기를 고르게 됩니다)</p>' +
+      '<div class="row"><input type="text" id="term" value="' + esc(S.data.termName || '2026 하반기 주말') + '" style="width:220px" aria-label="운영 시기 이름"><button class="btn sm primary" data-x="term-save">저장</button></div></section>';
     // 접수 시작
     var o = s.openRule || openRule();
     html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px"><h2 style="margin:0">접수 시작</h2>' +
@@ -1210,7 +1225,7 @@
       if (key === 'at') return ko(a.at, b.at);
       return (a._c.order - b._c.order) || ko(a.name, b.name);
     });
-    var html = '<section class="card pad row between"><div class="row">' + roundSelect() + '</div><span class="muted small">결석·취소 <b>' + recs.length + '</b>명 · 다음 수업일' + (next ? '(' + Core.shortDate(next) + ')' : '') + ' 신청 제한 <b>' + limited + '</b>명 · 출석 인정 ' + (recs.length - limited) + '명 · <span id="abs-sync"></span></span></section>' +
+    var html = '<section class="card pad row between"><b>' + esc(md(S.date)) + ' 수업 결석·취소</b><span class="muted small">결석·취소 <b>' + recs.length + '</b>명 · 다음 수업일' + (next ? '(' + Core.shortDate(next) + ')' : '') + ' 신청 제한 <b>' + limited + '</b>명 · 출석 인정 ' + (recs.length - limited) + '명 · <span id="abs-sync"></span></span></section>' +
       '<section class="card pad small" style="line-height:1.8;background:#F8FAFF;border-color:#BFD0F5"><b>결석자 처리 방법</b> ' + tip('출석 인정이 아닌 학생은 다음 수업일 점검에서 「신청 제한 학생」으로 표시됩니다.') + '<br>' +
       '· 수업 당일 결석: <b>출석부</b> 화면에서 학생 옆 <b>[결석]</b> 체크 (또는 전체 명단의 [결석])<br>' +
       '· 기한 후 취소: 아래 <b>자동 후보</b>(기준 시각 이후에 예약취소한 학생)에서 [등록] · 후보에 없는 학생은 <b>직접 등록</b> 칸에 학생명·학교·학년반만 적고 [모두 등록]<br>' +
@@ -2058,6 +2073,10 @@
       if (da && confirm(da.name + ' 학생의 결석 기록을 삭제할까요?')) deleteAbs(da);
     }
     else if (x === 'abs-add') absAddManual();
+    else if (x === 'round-now') {
+      if (S.att && S.att.mode === 'edit' && S.att.dirty && !confirm('출석부에 저장하지 않은 변경이 있습니다. 회차를 바꾸면 사라집니다. 바꿀까요?')) return;
+      S.lastUpload = null; load(currentRoundDate());
+    }
     else if (x === 'r-find') { S.query = t.getAttribute('data-name'); S.view = 'full'; render(); window.scrollTo(0, 0); }
     else if (x === 'guide-print') window.print();
     else if (x === 'set-add') { var ta = t.getAttribute('data-tab'); setCapture(ta); S.setDraft[ta].push([]); render(); }
@@ -2072,6 +2091,13 @@
         .catch(function (er) { toast(er.message, 5000); }).then(function () { setBusy(false); });
     }
     else if (x === 'rule-save') saveRule(+document.getElementById('ld').value, document.getElementById('lt').value);
+    else if (x === 'term-save') {
+      var tn = (document.getElementById('term').value || '').trim();
+      if (!tn) { toast('이름을 적어 주세요.'); return; }
+      setBusy(true);
+      api('termName', { name: tn }).then(function (res) { S.data.termName = res.name; if (res.rev) S.rev = res.rev; render(); toast('운영 시기 이름을 「' + res.name + '」로 바꿨습니다.'); })
+        .catch(function (er) { toast(/알 수 없는 요청/.test(er.message) ? 'Apps Script(Code.gs)를 새 버전으로 바꿔야 저장할 수 있습니다.' : er.message, 5000); }).then(function () { setBusy(false); });
+    }
     else if (x === 'open-save') {
       var od = +document.getElementById('od').value, ot = document.getElementById('ot').value;
       setBusy(true);
@@ -2279,7 +2305,10 @@
   });
 
   root.addEventListener('change', function (e) {
-    if (e.target.id === 'round') { S.lastUpload = null; load(e.target.value); }
+    if (e.target.id === 'round') {
+      if (S.att && S.att.mode === 'edit' && S.att.dirty && !confirm('출석부에 저장하지 않은 변경이 있습니다. 회차를 바꾸면 사라집니다. 바꿀까요?')) { e.target.value = S.date; return; }
+      S.lastUpload = null; load(e.target.value);
+    }
     else if (e.target.getAttribute('data-act') === 'cols') { S.showAll = e.target.checked; render(); }
     else if (e.target.id === 'fcls') { S.f.cls = e.target.value; refreshFull(); }
     else if (e.target.id === 'pick') { uploadFromFiles(e.target.files); e.target.value = ''; }

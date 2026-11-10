@@ -65,8 +65,16 @@ const server = http.createServer((req, res) => {
     await route.fulfill({ body: JSON.stringify(out), contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' } });
   });
   await page.goto('http://localhost:' + port + '/');
+  await page.waitForSelector('.ctxbar #round', { timeout: 8000 });
+  if (!(await page.textContent('.ctxbar')).includes('2026 하반기 주말')) throw new Error('작업 기준 줄에 운영 시기 이름 없음');
+  if ((await page.$$('#round')).length !== 1) throw new Error('회차 선택이 한 곳이 아님');
   await page.waitForSelector('.flowbar', { timeout: 8000 }).catch(async (e) => { console.log(await page.content()); throw e; });
   await page.screenshot({ path: path.join(OUT, '1-home.png'), fullPage: true });
+  await page.selectOption('#round', '2026-10-31');
+  await page.waitForSelector('.ctxbar.off >> text=지난 회차를 보고 있습니다');
+  await page.click('[data-x=round-now]');
+  await page.waitForFunction(() => !document.querySelector('.ctxbar.off') && document.getElementById('round').value === '2026-11-07');
+  console.log('작업 기준 줄: 회차 하나로, 지난 회차 경고 → 이번 회차로 확인');
   // 시각 없는 이름의 파일을 직접 올리기 (파일 선택 창 대신)
   const xbuf = toXls(files.explore.rows.slice(0, 3));
   // 파일 저장 시각을 고정한 시계로 만들기 위해 페이지 안에서 파일을 만들어 넣음

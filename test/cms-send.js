@@ -243,6 +243,7 @@ const server = http.createServer((req, res) => {
   const [cms2] = await Promise.all([ctx2.waitForEvent('page'), app2.click('[data-act=cms]')]);
   await cms2.waitForURL(/BD_selectReservationMngList/, { timeout: 10000 });
   if (!/BD_selectReservationMngList/.test(cms2.url())) throw new Error('관리자 목록 화면이 아님: ' + cms2.url());
+  if (!/q_searchSiteSn=34/.test(cms2.url())) throw new Error('창의융합교육센터(34) 목록 주소가 아님: ' + cms2.url());
   cms2.on('pageerror', (e) => errors.push('관리자2: ' + e.message));
   let extra2 = 0;
   ctx2.on('page', () => { extra2++; });
