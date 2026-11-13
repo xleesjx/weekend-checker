@@ -263,6 +263,17 @@ ok(tp.ok && tp.items.length === 1 && tp.items[0].cls === '기초1' && /로비코
   ok(r.code === 'BAD' && /내 이메일/.test(r.error), '내 계정을 지우면 거부');
   r = env.call('settingsSave', { tab: 'classes', rows: cur.classes.map((c) => c.slice()).concat([['저녁', 'x', '', '', '초9', '', '', '', '', '']]) });
   ok(r.code === 'BAD' && /시간대/.test(r.error) && /대상 학년/.test(r.error), '반 설정 검사');
+  // 반별 제목 색 (제목 색 열)
+  ok(cur.classes.every((c) => c.length === 11), '반 설정 표에 제목 색 열이 있음');
+  const colored = cur.classes.map((c) => c.slice()); colored[0][10] = 'bdd7ee';
+  r = env.call('settingsSave', { tab: 'classes', rows: colored });
+  ok(r.ok && env.ctx.readTable_('설정_반').rows[0][10] === 'BDD7EE', '제목 색 저장(대문자)');
+  ok(env.call('state', { date: '2026-11-07' }).classes.some((c) => c.color === 'BDD7EE') && env.call('state', { date: '2026-11-07' }).groups.some((c) => c.color === 'BDD7EE'), '제목 색이 화면 자료에 실림');
+  const badColor = cur.classes.map((c) => c.slice()); badColor[0][10] = 'red';
+  r = env.call('settingsSave', { tab: 'classes', rows: badColor });
+  ok(r.code === 'BAD' && /제목 색/.test(r.error), '잘못된 제목 색 거부');
+  r = env.call('settingsSave', { tab: 'classes', rows: cur.classes.map((c) => c.slice()) });
+  ok(r.ok, '제목 색 비워 두면(자동) 저장');
   r = env.call('settingsSave', { tab: 'rooms', rows: [['라온실'], ['혜윰실'], ['메이커실']] });
   ok(r.ok && env.call('state', {}).rooms.join() === '라온실,혜윰실,메이커실', '교실 목록 저장');
   r = env.call('settingsSave', { tab: 'schoolAdd', rows: [['하늘초등학교']] });

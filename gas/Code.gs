@@ -32,7 +32,7 @@ function init_() {
   HEADERS[SHEET.UPLOADS] = ['업로드시각', '업로더', '파일명', '파일시각', '수업일', '접수명', '인원', '결과'];
   HEADERS[SHEET.RESTRICT] = ['결석 수업일', '학생명', '학교', '사유', '제한 수업일(비우면 자동)', '메모', '등록자'];
   HEADERS[SHEET.DATES] = ['회차', '수업일', '비고'];
-  HEADERS[SHEET.CLASSES] = ['시간대', '수업반', '접수명', '예약명 키워드', '대상 시작', '대상 끝', '정원', '시작 회차', '끝 회차', '비고'];
+  HEADERS[SHEET.CLASSES] = ['시간대', '수업반', '접수명', '예약명 키워드', '대상 시작', '대상 끝', '정원', '시작 회차', '끝 회차', '비고', '제목 색'];
   HEADERS[SHEET.SCHOOLS] = ['학교명', '학교급', '앞 두 글자'];
   HEADERS[SHEET.MAP] = ['예약명(날짜 제외)', '접수명', '등록자', '등록시각'];
   HEADERS[SHEET.USERS] = ['이메일', '이름'];
@@ -278,7 +278,8 @@ function loadCtx_() {
     return {
       '시간대': Core.str(r[0]), '수업반': Core.str(r[1]), '접수명': Core.str(r[2]) || Core.str(r[1]),
       keyword: Core.str(r[3]), range: range, rangeText: Core.rangeLabel(range), cap: Core.str(r[6]),
-      from: Core.str(r[7]), to: Core.str(r[8]), note: Core.str(r[9]), order: i
+      from: Core.str(r[7]), to: Core.str(r[8]), note: Core.str(r[9]), order: i,
+      color: /^[0-9A-Fa-f]{6}$/.test(Core.str(r[10])) ? Core.str(r[10]).toUpperCase() : ''
     };
   }).filter(function (c) { return c['접수명']; });
   var schools = readTable_(SHEET.SCHOOLS).rows.map(function (r) { return { name: r[0], level: Core.str(r[1]).charAt(0) }; })
@@ -407,7 +408,7 @@ function stateBuild_(req, user) {
   out.classes = view.active.map(function (c) {
     var last = lastUpload_(uploads, date, c['접수명']);
     return { '시간대': c['시간대'], '수업반': c['수업반'], '접수명': c['접수명'], rangeText: c.rangeText, cap: c.cap, order: c.order,
-      lastAt: last ? last[0] : '', lastBy: last ? last[1] : '', lastFile: last ? last[2] : '' };
+      lastAt: last ? last[0] : '', lastBy: last ? last[1] : '', lastFile: last ? last[2] : '', color: c.color };
   });
   // 새로 들어옴: 이 반의 첫 업로드가 아니고, 가장 최근 업로드에서 처음 나타난 신청
   var upAt = {};
@@ -455,7 +456,7 @@ function stateBuild_(req, user) {
     return o;
   }) };
   out.schools = ctx.schools;
-  out.groups = ctx.classes.map(function (c) { return { '수업반': c['수업반'], '접수명': c['접수명'], order: c.order, range: c.range }; });
+  out.groups = ctx.classes.map(function (c) { return { '수업반': c['수업반'], '접수명': c['접수명'], order: c.order, range: c.range, color: c.color }; });
   return out;
 };
 
@@ -886,7 +887,7 @@ API.settings = function () {
     users: readTable_(SHEET.USERS).rows.map(function (r) { return r[1] || r[0]; }),
     edit: {
       dates: readTable_(SHEET.DATES).rows.map(function (r) { return [r[0], parseSheetDate_(r[1], ctx.year) || r[1], r[2] || '']; }),
-      classes: readTable_(SHEET.CLASSES).rows.map(function (r) { var o = []; for (var i = 0; i < 10; i++) o.push(r[i] || ''); return o; }),
+      classes: readTable_(SHEET.CLASSES).rows.map(function (r) { var o = []; for (var i = 0; i < 11; i++) o.push(r[i] || ''); return o; }),
       users: readTable_(SHEET.USERS).rows.map(function (r) { return [r[0], r[1] || '']; }),
       restrict: readTable_(SHEET.RESTRICT).rows.map(function (r) { return [parseSheetDate_(r[0], ctx.year) || r[0], r[1] || '', r[2] || '', r[3] || '', parseSheetDate_(r[4], ctx.year) || r[4] || '', r[5] || '', r[6] || '']; }),
       map: readTable_(SHEET.MAP).rows.map(function (r) { return [r[0], r[1] || '', r[2] || '', r[3] || '']; }),
@@ -939,6 +940,8 @@ API.settingsSave = function (req, user) {
       need(GRADE_RE_.test(r[4]) && (!r[5] || GRADE_RE_.test(r[5])), n + '대상 학년을 골라 주세요.');
       need(!r[6] || /^\d{1,3}$/.test(r[6]), n + '정원은 숫자입니다.');
       need((!r[7] || /^\d{1,3}$/.test(r[7])) && (!r[8] || /^\d{1,3}$/.test(r[8])), n + '시작·끝 회차는 숫자입니다.');
+      need(!r[10] || /^[0-9A-Fa-f]{6}$/.test(r[10]), n + '제목 색을 확인해 주세요.');
+      r[10] = r[10] ? r[10].toUpperCase() : '';
     });
   } else if (tab === 'users') {
     clean.forEach(function (r, i) {

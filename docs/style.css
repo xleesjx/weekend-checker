@@ -232,12 +232,12 @@ tr.cut td { text-decoration: line-through; color: #94A3B8; }
   body.printing > *:not(#print-area) { display: none !important; }
   body.printing #print-area { display: block; }
   body.printing { background: #fff; margin: 0; }
-  #print-area .pa-page { box-sizing: border-box; padding: 30mm 15mm 25mm 18mm; page-break-after: always; break-after: page; }
+  #print-area .pa-page { box-sizing: border-box; padding: 20mm 20mm 0; page-break-after: always; break-after: page; }
   #print-area .pa-page:last-child { page-break-after: auto; break-after: auto; }
-  #print-area .xls { zoom: 0.87; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #print-area .xls { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   #print-area .xls td.xk { visibility: hidden; }
   #print-area table.cb { border-collapse: collapse; width: 100%; font-family: '맑은 고딕', 'Malgun Gothic', sans-serif; font-size: 11pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  #print-area table.cb th, #print-area table.cb td { border: 1px solid #000; padding: 4px 6px; text-align: center; height: 26px; white-space: nowrap; }
+  #print-area table.cb th, #print-area table.cb td { border: 1px solid #000; padding: var(--pad, 4px) 6px; text-align: center; height: var(--rh, 26px); line-height: 1.2; white-space: nowrap; }
   #print-area .cb-t1 { background: #FFF2CC; font-size: 15pt; }
   #print-area .cb-t2 { background: #FFF2CC; }
   #print-area table.cb thead tr:last-child th { background: #DBDBDB; }

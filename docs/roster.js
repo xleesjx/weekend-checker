@@ -248,10 +248,43 @@ var Roster = (function () {
     return { errors: errors, warns: warns };
   }
 
-  function fileName(date, version) {
-    var md = date.slice(5, 7) + date.slice(8, 10);
-    return '출석부_' + md + (version > 1 ? '_' + version + '차' : '') + '.xlsx';
+  function fileName(date) {
+    return '출석부_' + date.slice(5, 7) + date.slice(8, 10) + '.xlsx';
   }
+
+  /* ───────── 반별 제목 색 (같은 수업반끼리 같은 색) ───────── */
+
+  var TITLE_FILL = 'FFF2CC';  // 원본 서식의 제목·교시 줄 기본 색
+  // 원본 출석부(2026)에서 쓰던 색: 이름에 이 낱말이 들어 있는 수업반은 이 색
+  var NAME_COLORS = [['기초', 'FFF2CC'], ['탐험', 'BDD7EE'], ['마스터', 'E2F0D9'], ['도전', 'FECCD4']];
+  var PALETTE = ['C6D9FE', 'FEBEC9', 'E4DFEC', 'FCE4D6', 'D9EAD3', 'FFE699', 'D0E0E3', 'EAD1DC', 'DDEBF7', 'FFD9B3'];
+  var HEX6 = /^[0-9A-Fa-f]{6}$/;
+
+  /**
+   * 수업반마다 제목 색 정하기. list: [{ name, color }] (설정 순서). 설정에서 고른 색이 먼저,
+   * 없으면 이름으로 원본 색, 그래도 없으면 겹치지 않게 색 목록에서 순서대로
+   */
+  function groupColors(list) {
+    var out = {}, used = {};
+    (list || []).forEach(function (g) {
+      if (g.name && HEX6.test(str(g.color)) && !out[g.name]) { out[g.name] = str(g.color).toUpperCase(); }
+    });
+    (list || []).forEach(function (g) {
+      if (!g.name || out[g.name]) return;
+      var hit = NAME_COLORS.filter(function (nc) { return g.name.indexOf(nc[0]) >= 0; })[0];
+      if (hit) out[g.name] = hit[1];
+    });
+    Object.keys(out).forEach(function (k) { used[out[k]] = true; });
+    (list || []).forEach(function (g) {
+      if (!g.name || out[g.name]) return;
+      var c = PALETTE.filter(function (x) { return !used[x]; })[0] || PALETTE[Object.keys(out).length % PALETTE.length];
+      out[g.name] = c; used[c] = true;
+    });
+    return out;
+  }
+
+  /* 인쇄: 여백 20mm, 표는 가로 안쪽에 맞춰 줄이고(배율), 줄 높이를 조금 늘려 세로도 채웁니다 */
+  var PRINT_ZOOM = 0.936, PRINT_ROW_SCALE = 1.0194, EXCEL_SCALE = 93;
 
   /* ───────── 엑셀 (원본 출석부 서식 그대로) ───────── */
 
@@ -264,10 +297,11 @@ var Roster = (function () {
   var TPL_HEIGHTS = [22.5, 22.5, 38.25, 30.75, 30.75, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 26.25, 29.25, 29.25, 29.25, 29.25, 29.25];
 
   /** 칸마다 새 서식 객체를 넣습니다 (병합된 칸끼리 서식을 공유하지 않도록) */
-  function applyStyle(cell, k) {
+  function applyStyle(cell, k, color, rightMed) {
     var t = TPL_STYLES[k];
     var st = { font: { name: FONT, size: t[0], bold: !!t[1], color: { argb: 'FF000000' }, charset: 129, family: 3 } };
-    if (t[2]) st.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + t[2] }, bgColor: { indexed: 64 } };
+    var fillRgb = t[2] === TITLE_FILL && color ? color : t[2];
+    if (fillRgb) st.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + fillRgb }, bgColor: { indexed: 64 } };
     var al = {};
     if (t[3]) al.horizontal = t[3];
     if (t[4]) al.vertical = t[4] === 'center' ? 'middle' : t[4];  // 엑셀의 세로 가운데는 ExcelJS에서 'middle'
@@ -275,6 +309,7 @@ var Roster = (function () {
     st.alignment = al;
     var bd = {};
     ['left', 'right', 'top', 'bottom'].forEach(function (side, i) { if (t[6 + i]) bd[side] = { style: t[6 + i], color: { argb: 'FF000000' } }; });
+    if (rightMed) bd.right = { style: 'medium', color: { argb: 'FF000000' } };
     st.border = bd;
     cell.style = st;
   }
@@ -328,6 +363,8 @@ var Roster = (function () {
    */
   function sheetHtml(blk, opts) {
     opts = opts || {};
+    var nc = opts.print ? 10 : COLS;        // 인쇄에는 화면 전용 열(K)을 넣지 않습니다
+    var rs = opts.print ? PRINT_ROW_SCALE : 1;
     var bv = blockValues(blk), v = bv.values;
     var px = function (w) { return Math.round(w * 7 + 5); };
     var cover = {}, span = {};
@@ -336,16 +373,17 @@ var Roster = (function () {
       for (var r = m[0]; r <= m[2]; r++) for (var c = m[1]; c <= m[3]; c++) if (r !== m[0] || c !== m[1]) cover[r + ',' + c] = true;
     });
     var bw = function (x) { return x === 'medium' ? '2px solid #000' : (x === 'thin' ? '1px solid #000' : '0'); };
-    var html = '<table class="xls"><colgroup>' + COL_WIDTHS.map(function (w) { return '<col style="width:' + px(w) + 'px">'; }).join('') + '</colgroup><tbody>';
+    var html = '<table class="xls"' + (opts.print ? ' style="zoom:' + PRINT_ZOOM + '"' : '') + '><colgroup>' + COL_WIDTHS.slice(0, nc).map(function (w) { return '<col style="width:' + px(w) + 'px">'; }).join('') + '</colgroup><tbody>';
     for (var t = 0; t < BLOCK_ROWS; t++) {
-      html += '<tr style="height:' + Math.round(TPL_HEIGHTS[t] * 4 / 3) + 'px">';
-      for (var c = 0; c < COLS; c++) {
+      html += '<tr style="height:' + (opts.print ? (TPL_HEIGHTS[t] * 4 / 3 * rs).toFixed(2) : Math.round(TPL_HEIGHTS[t] * 4 / 3)) + 'px">';
+      for (var c = 0; c < nc; c++) {
         if (cover[t + ',' + c]) continue;
         var m = span[t + ',' + c] || [t, c, t, c];
         var st = TPL_STYLES[TPL_GRID[t][c]];
         var L = TPL_STYLES[TPL_GRID[m[0]][m[1]]][6], R = TPL_STYLES[TPL_GRID[m[0]][m[3]]][7];
         var T = TPL_STYLES[TPL_GRID[m[0]][m[1]]][8], B = TPL_STYLES[TPL_GRID[m[2]][m[1]]][9];
-        var css = 'font-size:' + Math.round(st[0] * 4 / 3) + 'px;' + (st[1] ? 'font-weight:700;' : '') + (st[2] ? 'background:#' + st[2] + ';' : '') +
+        if (m[3] === 9) R = 'medium';  // 오른쪽 바깥 테두리는 맨 아래 서명 칸까지 굵게
+        var css = 'font-size:' + Math.round(st[0] * 4 / 3) + 'px;' + (st[1] ? 'font-weight:700;' : '') + (st[2] ? 'background:#' + (st[2] === TITLE_FILL && blk.color ? blk.color : st[2]) + ';' : '') +
           'text-align:' + (st[3] || 'left') + ';vertical-align:' + (st[4] === 'center' ? 'middle' : 'bottom') + ';' + (st[5] ? 'white-space:normal;' : '') +
           'border-left:' + bw(L) + ';border-right:' + bw(R) + ';border-top:' + bw(T) + ';border-bottom:' + bw(B) + ';';
         var stu = (t >= 5 && t < 5 + STUDENT_ROWS) ? bv.students[t - 5] : null;
@@ -364,8 +402,8 @@ var Roster = (function () {
     var last = Math.max(1, blocks.length) * BLOCK_ROWS;
     var ws = wb.addWorksheet(sheetName, {
       properties: { defaultRowHeight: 16.5 },
-      pageSetup: { paperSize: 9, orientation: 'portrait', scale: 87, fitToPage: false, fitToWidth: 0, fitToHeight: 0,
-        margins: { left: 0.7086614173228347, right: 0.5905511811023623, top: 1.1811023622047245, bottom: 0.984251968503937, header: 0.3937007874015748, footer: 0.1968503937007874 },
+      pageSetup: { paperSize: 9, orientation: 'portrait', scale: EXCEL_SCALE, fitToPage: false, fitToWidth: 0, fitToHeight: 0,
+        margins: { left: 0.7874, right: 0.7874, top: 0.7874, bottom: 0.7874, header: 0.3, footer: 0.3 },
         printArea: 'A1:J' + last },
       views: [{ zoomScale: 85, zoomScaleNormal: 85 }]
     });
@@ -383,7 +421,7 @@ var Roster = (function () {
         var row = ws.getRow(r0 + t);
         row.height = TPL_HEIGHTS[t];
         for (var c = 1; c <= COLS; c++) {
-          applyStyle(row.getCell(c), TPL_GRID[t][c - 1]);
+          applyStyle(row.getCell(c), TPL_GRID[t][c - 1], blk.color, c === 10);
           if (v[t][c - 1] !== null) row.getCell(c).value = v[t][c - 1];
         }
       }
@@ -411,7 +449,7 @@ var Roster = (function () {
     var ws = wb.addWorksheet(sheetName, {
       properties: { defaultRowHeight: 16.5 },
       pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
-        margins: { left: 0.5, right: 0.4, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 } },
+        margins: { left: 0.7874, right: 0.7874, top: 0.7874, bottom: 0.7874, header: 0.3, footer: 0.3 } },
       views: [{ zoomScale: 100 }]
     });
     CB_COLS.forEach(function (c, i) { ws.getColumn(i + 1).width = c[1]; });
@@ -453,8 +491,8 @@ var Roster = (function () {
       r++;
     };
     blocks.forEach(function (blk, bi) {
-      band(contactTitle(blk.title), 15, 'FFF2CC', 30, true);
-      band(blk.line, 11, 'FFF2CC', 22, true);
+      band(contactTitle(blk.title), 15, blk.color || TITLE_FILL, 30, true);
+      band(blk.line, 11, blk.color || TITLE_FILL, 22, true);
       if (!blk.waitsOnly) {
         head(CB_COLS.map(function (c) { return c[0]; }));
         var list = byName(blk.students);
@@ -480,8 +518,12 @@ var Roster = (function () {
   function contactHtml(blocks) {
     var head = '<tr>' + CB_COLS.map(function (c) { return '<th style="width:' + Math.round(c[1] * 7 + 5) + 'px">' + escHtml(c[0]) + '</th>'; }).join('') + '</tr>';
     return blocks.map(function (blk) {
-      var html = '<div class="pa-page"><table class="cb"><thead><tr><th colspan="8" class="cb-t1">' + escHtml(contactTitle(blk.title)) + '</th></tr>' +
-        '<tr><th colspan="8" class="cb-t2">' + escHtml(blk.line || '') + '</th></tr>' + (blk.waitsOnly ? '' : head) + '</thead><tbody>';
+      // 한 장에 들어가도록 줄이 많으면 줄 높이를 줄입니다 (여백 20mm 안에서 약 254mm)
+      var nW = (blk.waits || []).length, rowsN = 3 + Math.max((blk.students || []).length, 1) + (blk.waitsOnly ? -1 : 0) + (nW ? 2 + nW : 0);
+      var rh = Math.max(19, Math.min(26, Math.floor((950 - (nW ? 12 : 0)) / rowsN)));
+      var fit = rh < 26 ? ' style="--rh:' + rh + 'px;--pad:' + Math.max(0, Math.floor((rh - 19) / 2)) + 'px"' : '';
+      var html = '<div class="pa-page"' + fit + '><table class="cb"><thead><tr><th colspan="8" class="cb-t1"' + (blk.color ? ' style="background:#' + blk.color + '"' : '') + '>' + escHtml(contactTitle(blk.title)) + '</th></tr>' +
+        '<tr><th colspan="8" class="cb-t2"' + (blk.color ? ' style="background:#' + blk.color + '"' : '') + '>' + escHtml(blk.line || '') + '</th></tr>' + (blk.waitsOnly ? '' : head) + '</thead><tbody>';
       if (!blk.waitsOnly) {
         var list = byName(blk.students);
         html += list.map(function (s, i) { return '<tr><td>' + (i + 1) + '</td><td>' + escHtml(s.school) + '</td><td>' + escHtml(s.ban) + '</td><td>' + escHtml(s.name) + '</td><td>' + escHtml(s.parent) + '</td><td>' + escHtml(s.phone) + '</td><td></td><td></td></tr>'; }).join('') ||
@@ -497,13 +539,12 @@ var Roster = (function () {
     }).join('');
   }
 
-  function contactFileName(date, version) {
-    var md = date.slice(5, 7) + date.slice(8, 10);
-    return '명렬표_' + md + (version > 1 ? '_' + version + '차' : '') + '.xlsx';
+  function contactFileName(date) {
+    return '명렬표_' + date.slice(5, 7) + date.slice(8, 10) + '.xlsx';
   }
 
   return {
-    CAP: CAP, buildContactBook: buildContactBook, contactFileName: contactFileName, contactTitle: contactTitle, contactHtml: contactHtml, officialSchool: officialSchool, normalizeBan: normalizeBan, sortStudents: sortStudents, students: students,
+    CAP: CAP, groupColors: groupColors, PRINT_ZOOM: PRINT_ZOOM, buildContactBook: buildContactBook, contactFileName: contactFileName, contactTitle: contactTitle, contactHtml: contactHtml, officialSchool: officialSchool, normalizeBan: normalizeBan, sortStudents: sortStudents, students: students,
     linkSets: linkSets, split: split, shortTools: shortTools, composeLine: composeLine, defaultSessions: defaultSessions,
     swapPair: swapPair, titleDate: titleDate, fileName: fileName, buildWorkbook: buildWorkbook, byName: byName, blockValues: blockValues, sheetHtml: sheetHtml,
     ROOMS: ROOMS, makeTitle: makeTitle, makeLine: makeLine, autoTag: autoTag, defaultBlock: defaultBlock, parseTitle: parseTitle, parseLine: parseLine, checkBlocks: checkBlocks

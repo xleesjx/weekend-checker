@@ -69,7 +69,7 @@ ok(R.composeLine('놀이1/과학1', '창의실/혜윰실', { 놀이1: '핑거워
 ok(R.composeLine('탐험', '창의실', { 탐험: '캡컷' }) === '1-4교시 창의실(캡컷)', '한 수업');
 ok(R.defaultSessions('기초 1,2반', 1, 2) === '기초2/기초1' && R.defaultSessions('창의 3,4반', 0, 2) === '놀이2/과학2' && R.defaultSessions('메이커1', 0, 1) === '메이커1', '기본 수업 연결');
 ok(R.titleDate('10월 31일 주말SW프로그램 기초코딩 오전1반 수강생 명단', '2026-11-07') === '11월 7일 주말SW프로그램 기초코딩 오전1반 수강생 명단', '제목 날짜 바꾸기');
-ok(R.fileName('2026-11-07', 1) === '출석부_1107.xlsx' && R.fileName('2026-11-07', 2) === '출석부_1107_2차.xlsx', '파일 이름');
+ok(R.fileName('2026-11-07', 1) === '출석부_1107.xlsx' && R.fileName('2026-11-07', 3) === '출석부_1107.xlsx' && R.contactFileName('2026-11-07', 2) === '명렬표_1107.xlsx', '파일 이름은 차수 없이 날짜만');
 
 // 반 설정
 const blk = { program: 'SW', name: '기초코딩 오전1반', room1: '라온실', room2: '놀이실', tool1: '스케치북', tool2: '3D펜' };
@@ -103,5 +103,34 @@ ok(bv.values[5][3] === '가람' && bv.values[6][3] === '나래' && bv.values[7][
 ok(bv.values[4][5] === '1교시' && bv.values[23][1] === '신청인원' && bv.values[27][0] === 4 && bv.values[20][0] === 16 && bv.values[21][0] === null, '교시·출결 통계 칸');
 const html = R.sheetHtml({ title: '제목<x>', line: 'L', tag: 't', students: [] });
 ok(/colspan="10" rowspan="2"/.test(html) && /제목&lt;x&gt;/.test(html) && (html.match(/<tr/g) || []).length === 28 && /출석여부/.test(html) && /지도교사/.test(html), '화면 미리보기도 엑셀 28줄 그대로');
+
+
+// 반별 제목 색: 설정 → 원본 색(이름) → 겹치지 않는 색, 같은 수업반은 같은 색
+const gc = R.groupColors([{ name: '기초코딩', color: '' }, { name: '탐험코딩', color: '' }, { name: '마스터코딩', color: '' }, { name: '창의 1,2반', color: '' }, { name: '창의 3,4반', color: '' }, { name: '기초코딩', color: '' }, { name: '새수업', color: '00ff00' }]);
+ok(gc['기초코딩'] === 'FFF2CC' && gc['탐험코딩'] === 'BDD7EE' && gc['마스터코딩'] === 'E2F0D9', '이름으로 원본 출석부 색');
+ok(gc['창의 1,2반'] !== gc['창의 3,4반'] && gc['창의 1,2반'] === 'C6D9FE' && gc['창의 3,4반'] === 'FEBEC9', '나머지 수업반은 겹치지 않는 색');
+ok(gc['새수업'] === '00FF00', '설정에서 고른 색이 먼저');
+ok(R.groupColors([{ name: 'A', color: 'zzz' }])['A'] === 'C6D9FE', '잘못된 색은 자동');
+const hc = R.sheetHtml({ title: 'T', line: 'L', tag: 't', color: 'FEBEC9', students: [] });
+ok((hc.match(/background:#FEBEC9/g) || []).length === 2 && /background:#DBDBDB/.test(hc) && !/background:#FFF2CC/.test(hc), '제목·교시 줄만 반 색, 머리줄 회색은 그대로: ' + (hc.match(/background:#FEBEC9/g) || []).length);
+// 오른쪽 바깥 테두리는 맨 아래 서명 칸까지 굵게
+const lastRows = hc.split('<tr').slice(24, 29);
+ok(lastRows.length === 5 && lastRows.every((r) => { const tds = r.match(/<td[^>]*>/g) || []; return /border-right:2px solid #000/.test(tds[tds.length - 2]); }), '서명 칸 오른쪽 바깥 테두리 굵게');
+// 인쇄용: 화면 전용 11번째 칸 없음, 배율·줄 높이 늘림
+const ph = R.sheetHtml({ title: 'T', line: 'L', tag: 't', students: [] }, { print: true });
+ok((ph.match(/<col /g) || []).length === 10 && !/class="xk"/.test(ph) && /zoom:0\.936/.test(ph), '인쇄용 표는 10칸 + 배율');
+ok((R.sheetHtml({ title: 'T', line: 'L', tag: 't', students: [] }).match(/<col /g) || []).length === 11, '화면 미리보기는 11칸(버튼 열 포함)');
+// 엑셀 파일: 제목 색, 오른쪽 굵은 테두리, 여백 20mm
+const ExcelJS = require('../docs/vendor/exceljs.min.js');
+const wb = R.buildWorkbook(ExcelJS, [{ title: 'T', line: 'L', tag: 't', color: 'BDD7EE', students: [] }, { title: 'T2', line: 'L2', tag: 't', students: [] }], '1107');
+const ws = wb.worksheets[0];
+ok(ws.getCell(1, 1).fill.fgColor.argb === 'FFBDD7EE' && ws.getCell(3, 1).fill.fgColor.argb === 'FFBDD7EE' && ws.getCell(4, 1).fill.fgColor.argb === 'FFDBDBDB', '엑셀 제목 색 / 머리줄 회색');
+ok(ws.getCell(29, 1).fill.fgColor.argb === 'FFFFF2CC', '색을 안 정한 반은 기본 노랑');
+ok([24, 25, 26, 27, 28].every((r) => ws.getCell(r, 10).border.right.style === 'medium'), '엑셀 서명 칸 오른쪽 테두리 굵게');
+ok(Math.abs(ws.pageSetup.margins.left * 25.4 - 20) < 0.1 && Math.abs(ws.pageSetup.margins.bottom * 25.4 - 20) < 0.1 && ws.pageSetup.scale === 93, '엑셀 인쇄 여백 20mm · 배율 93%');
+const cb = R.buildContactBook(ExcelJS, [{ title: '11월 7일 기초', line: 'L', color: 'FEBEC9', students: [], waits: [] }], '1107');
+ok(cb.worksheets[0].getCell(1, 1).fill.fgColor.argb === 'FFFEBEC9' && Math.abs(cb.worksheets[0].pageSetup.margins.top * 25.4 - 20) < 0.1, '명렬표도 제목 색·여백 20mm');
+const chtml = R.contactHtml([{ title: 'T', line: 'L', color: 'FEBEC9', students: [], waits: [] }]);
+ok(/class="cb-t1" style="background:#FEBEC9"/.test(chtml), '명렬표 인쇄도 제목 색');
 
 console.log('출석부 테스트 ' + passed + '개 통과');

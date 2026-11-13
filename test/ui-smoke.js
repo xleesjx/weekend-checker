@@ -200,6 +200,12 @@ const server = http.createServer((req, res) => {
   await page.click('[data-x=att-start-work]');
   await page.waitForSelector('text=출석부 작업 중');
   if (!lastAtt() || lastAtt().v !== 1) throw new Error('작업 시작 저장 안 됨');
+  {
+    const cols = await page.$$eval('table.xls', (ts) => ts.map((t) => getComputedStyle(t.querySelector('td')).backgroundColor));
+    const lat = lastAtt().data.blocks.map((b) => b.color);
+    if (new Set(cols).size < 3 || lat.some((c) => !/^[0-9A-F]{6}$/.test(c))) throw new Error('반별 제목 색: ' + cols.join(' / ') + ' · 저장 ' + lat.join());
+    console.log('반별 제목 색:', cols.join(' / '));
+  }
   // 반 설정은 고정된 출석부에서
   const openSet = async (i) => { await page.click('[data-x=att-setopen] >> nth=' + i); await page.waitForSelector('[data-xc=att-b][data-i="' + i + '"][data-f=room1]'); };
   for (let i = 0; i < 4; i++) await openSet(i);
@@ -242,11 +248,19 @@ const server = http.createServer((req, res) => {
   await page.waitForSelector('[data-x=att-print][data-what=changed][disabled]');
   console.log('웹앱 인쇄: 전체 인쇄 → 인쇄한 반 기록, 아직 인쇄 안 한 반 0');
   // 엑셀·명렬표도 내려받기 가능
-  await page.click('details.more summary');
-  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-redl]')]);
-  await dl.saveAs(path.join(OUT, 'att1.xlsx'));
-  const [dlc] = await Promise.all([page.waitForEvent('download'), page.click('[data-x=att-contacts]')]);
-  await dlc.saveAs(path.join(OUT, 'contacts1.xlsx'));
+  await page.evaluate(() => { window.__dlNames = []; const c = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { if (this.download) window.__dlNames.push(this.download); return c.apply(this, arguments); }; });
+  const dls = [];
+  page.on('download', (d) => dls.push(d));
+  await page.click('[data-x=att-dl]');
+  for (let k = 0; k < 60 && dls.length < 2; k++) await page.waitForTimeout(100);
+  if (dls.length !== 2) throw new Error('출석부·명렬표 엑셀이 한 번에 2개 받아지지 않음: ' + dls.length);
+  const names = (await page.evaluate(() => window.__dlNames || [])).slice().sort();
+  if (names.join() !== '명렬표_1107.xlsx,출석부_1107.xlsx') throw new Error('엑셀 파일 이름: ' + names.join());
+  // 내려받은 순서: 출석부 → 명렬표
+  await dls[0].saveAs(path.join(OUT, 'att1.xlsx'));
+  await dls[1].saveAs(path.join(OUT, 'contacts1.xlsx'));
+  await page.waitForSelector('text=엑셀: 2차 기준으로 받았습니다');
+  page.removeAllListeners('download');
   {
     const X = require(process.env.XLSX_PATH || 'xlsx');
     const wb = X.readFile(path.join(OUT, 'contacts1.xlsx'));
@@ -337,7 +351,7 @@ const server = http.createServer((req, res) => {
   const rb = lastAtt().data.blocks[0];
   if (rb.tool1 !== '스케치북' || rb.room1 !== '라온실' || rb.name !== '기초코딩 오전1반') throw new Error('다시 만들 때 반 설정이 사라짐: ' + JSON.stringify([rb.tool1, rb.room1, rb.name]));
   console.log('처음부터 다시 만들기: 반 설정 유지 확인');
-  console.log('내려받은 파일:', rawDl.suggestedFilename(), dl.suggestedFilename(), dlc.suggestedFilename());
+  console.log('내려받은 파일:', rawDl.suggestedFilename(), names.join(' '));
   await page.click('[data-view=settings]');
   await page.waitForSelector('text=수업일');
   await page.waitForSelector('#set-dates');
@@ -359,7 +373,14 @@ const server = http.createServer((req, res) => {
   await page.click('[data-x=set-save][data-tab=classes]');
   await page.waitForSelector('#set-classes >> text=정원은 숫자입니다');
   await page.click('[data-x=set-reset][data-tab=classes]');
-  console.log('설정 메뉴: 수업일 고치기·줄 추가·저장, 잘못된 값 안내 확인');
+  // 반 색: 고르지 않은 반은 「자동」, 하나 고르면 저장 뒤 시트에 들어감
+  if ((await page.$$('#set-classes input[type=color]')).length < 3 || !(await page.textContent('#set-classes')).includes('자동')) throw new Error('반 설정에 제목 색 칸이 없음');
+  await page.$eval('#set-classes tbody tr:nth-child(2) input[type=color]', (el) => { el.value = '#aabbcc'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.click('[data-x=set-save][data-tab=classes]');
+  await page.waitForFunction(() => /반 \(접수 단위\) 설정을 저장/.test(document.getElementById('toast').textContent));
+  const colorRows = env.ctx.readTable_('설정_반').rows.map((r) => r[10]);
+  if (colorRows[1] !== 'AABBCC' || colorRows[0] !== '') throw new Error('반 색 저장: ' + JSON.stringify(colorRows));
+  console.log('설정 메뉴: 수업일 고치기·줄 추가·저장, 잘못된 값 안내, 반 색 고르기 확인');
   await page.screenshot({ path: path.join(OUT, '4-settings.png'), fullPage: true });
   await page.click('[data-act=guide]');
   await page.waitForSelector('text=지금 할 일');
