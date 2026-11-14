@@ -133,4 +133,37 @@ ok(cb.worksheets[0].getCell(1, 1).fill.fgColor.argb === 'FFFEBEC9' && Math.abs(c
 const chtml = R.contactHtml([{ title: 'T', line: 'L', color: 'FEBEC9', students: [], waits: [] }]);
 ok(/class="cb-t1" style="background:#FEBEC9"/.test(chtml), '명렬표 인쇄도 제목 색');
 
+
+// 게시용 명단표: 16줄 고정, 교실 강조, 출석여부·비고·통계·신청반 없음
+const pst = (n, extra) => Object.assign({ title: '11월 14일 주말SW프로그램 기초코딩 오전1반 수강생 명단', line: '1-2교시 라온실, 3-4교시 놀이실(기어목걸이 만들기/템플, 언더워터)', program: 'SW', name: '기초코딩 오전1반', same: false, room1: '라온실', room2: '놀이실', tool1: '기어목걸이 만들기', tool2: '템플, 언더워터', color: 'BDD7EE',
+  students: Array.from({ length: n }, (_, i) => ({ name: '학생' + String(i).padStart(2, '0'), school: '가온초등학교', ban: '3-1', status: '' })) }, extra || {});
+const ph8 = R.postSheetHtml(pst(8), '2026-11-14'), ph16 = R.postSheetHtml(pst(16), '2026-11-14');
+const bodyRows = (h) => (h.match(/<tbody>[\s\S]*<\/tbody>/)[0].match(/<tr>/g) || []).length;
+ok(bodyRows(ph8) === 16 && bodyRows(ph16) === 16, '게시용은 학생 수와 상관없이 16줄');
+ok(ph8.match(/--rh:[\d.]+mm/)[0] === ph16.match(/--rh:[\d.]+mm/)[0], '게시용 줄 높이는 모든 반이 같음');
+ok(!/출석여부|비고|신청인원|수강인원|결석인원|지도교사|신청반/.test(ph16), '게시용에는 출석 칸·통계·신청반이 없음');
+ok(/SW 기초코딩 오전1반 수강생 명단/.test(ph8) && /11월 14일 기어목걸이 만들기\/템플, 언더워터/.test(ph8), '게시용 제목: 프로그램+반 이름 / 날짜+교구');
+ok(/1-2교시<\/span> <b class="po-r1">라온실<\/b><span class="po-s">, 3-4교시<\/span> <b class="po-r2">놀이실/.test(ph8), '교실 줄: 첫 교실 강조(po-r1) + 둘째 교실');
+ok(/--pc:#BDD7EE/.test(ph8), '게시용 제목 색은 반 색');
+ok(/<td>학생07<\/td>/.test(ph8) && /<td>9<\/td><td><\/td><td><\/td><td><\/td>/.test(ph8), '학생 이름 + 빈 줄에는 번호만');
+const ps = R.postSheetHtml(pst(3, { same: true, room2: '', tool2: '', room1: '라온실', tool1: '파이썬', name: '마스터코딩 오전반' }), '2026-11-14');
+ok(/1-4교시<\/span> <b class="po-r1">라온실<\/b>/.test(ps) && !/po-r2/.test(ps), '한 교실짜리 수업은 1-4교시 교실만');
+const pOld = R.postSheetHtml({ title: '11월 14일 주말창의프로그램 오후1반 수강생 명단', line: '1-2교시 놀이실, 3-4교시 라온실(A/B)', students: [] }, '2026-11-14');
+ok(/창의 오후1반 수강생 명단/.test(pOld) && /po-r1">놀이실/.test(pOld) && /11월 14일 A\/B/.test(pOld), '교실 칸이 없는 예전 저장본도 문구에서 읽음');
+const p17 = R.postSheetHtml(pst(18), '2026-11-14');
+ok(bodyRows(p17) === 18 && Number(p17.match(/--rh:([\d.]+)mm/)[1]) < 12, '17명 이상이면 줄 높이만 줄여 한 장에 맞춤');
+ok(R.postFileName('2026-11-14') === '게시용_1114.xlsx', '게시용 엑셀 파일 이름');
+const pwb = R.buildPostBook(ExcelJS, [pst(8), pst(16, { name: '탐험코딩 오전반', same: true, room2: '', color: '' })], '1114', '2026-11-14');
+const pws = pwb.worksheets[0];
+ok(pws.getCell(1, 1).fill.fgColor.argb === 'FFBDD7EE' && pws.getCell(1, 1).value === 'SW 기초코딩 오전1반 수강생 명단', '게시용 엑셀 제목·색');
+const rtv = pws.getCell(3, 1).value;
+ok(rtv.richText && rtv.richText[1].text === '라온실' && rtv.richText[1].font.color.argb === 'FFC00000' && rtv.richText[1].font.size === 34, '게시용 엑셀 교실: 첫 교실 빨강·34pt');
+ok(pws.getCell(4, 1).value === '번호' && pws.getCell(5, 4).value === '학생00' && pws.getCell(20, 1).value === 16 && pws.getCell(13, 4).value === '' || pws.getCell(13, 4).value === null, '게시용 엑셀: 머리글 + 16줄');
+ok(pws.getRow(5).height === pws.getRow(20).height && pws.getRow(20).height > 30, '게시용 엑셀 줄 높이 통일');
+ok(/탐험코딩 오전반/.test(pws.getCell(21, 1).value) && pws.getCell(21, 1).fill.fgColor.argb === 'FFFFF2CC', '둘째 반은 다음 장에서 시작, 색을 안 정하면 기본 노랑');
+ok(pws.getCell(5, 4).border.right.style === 'medium' && pws.getCell(20, 1).border.bottom.style === 'medium', '게시용 엑셀 바깥 테두리 굵게');
+ok(Math.abs(pws.pageSetup.margins.left * 25.4 - 20) < 0.1 && pws.pageSetup.printArea === 'A1:D40', '게시용 엑셀 여백 20mm · 인쇄 범위: ' + pws.pageSetup.printArea);
+// 인쇄용 굵은 선은 3px
+ok(/border-left:3px solid #000/.test(R.sheetHtml({ title: 'T', line: 'L', tag: 't', students: [] }, { print: true })) && /border-left:2px solid #000/.test(R.sheetHtml({ title: 'T', line: 'L', tag: 't', students: [] })), '인쇄용 굵은 선 3px, 화면은 2px');
+
 console.log('출석부 테스트 ' + passed + '개 통과');

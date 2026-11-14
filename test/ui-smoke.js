@@ -230,35 +230,68 @@ const server = http.createServer((req, res) => {
   // 웹앱에서 바로 인쇄 → 인쇄한 반 기록 (PRINT_PDF=1이면 인쇄 화면을 PDF로 저장해 모양 확인)
   if (process.env.PRINT_PDF) {
     await page.evaluate(() => { window.print = () => {}; });
-    await page.click('[data-x=att-print][data-what=all]');
+    await page.click('[data-x=att-print][data-what=att-all]');
     await page.emulateMedia({ media: 'print' });
     await page.pdf({ path: path.join(OUT, 'print-all.pdf'), preferCSSPageSize: true, printBackground: true });
     await page.emulateMedia({ media: 'screen' });
     await page.waitForTimeout(1200);
     await page.evaluate(() => { window.print = () => {}; });
-    await page.click('[data-x=att-print][data-what=contacts]');
+    await page.click('[data-x=att-print][data-what=con-all]');
     await page.emulateMedia({ media: 'print' });
     await page.pdf({ path: path.join(OUT, 'print-contacts.pdf'), preferCSSPageSize: true, printBackground: true });
     await page.emulateMedia({ media: 'screen' });
     await page.waitForTimeout(1200);
-  } else await page.click('[data-x=att-print][data-what=all]');
+  } else await page.click('[data-x=att-print][data-what=att-all]');
   for (let k = 0; k < 30 && !lastAtt().data.printed; k++) await page.waitForTimeout(100);
   const pr = lastAtt().data.printed || {};
   if (Object.keys(pr).length !== lastAtt().data.blocks.length) throw new Error('인쇄 기록: ' + JSON.stringify(pr));
-  await page.waitForSelector('[data-x=att-print][data-what=changed][disabled]');
+  if (await page.$('.po-note')) throw new Error('모두 인쇄했는데 「인쇄 안 한 반」 표시가 남음');
+  // 출력 세 가지: 출석부(반마다 1장) · 연락처 · 게시용(반마다 3장, 16줄 고정, 첫 교실 빨강)
+  {
+    const nBlocks = lastAtt().data.blocks.length;
+    const pages = async (what) => {
+      await page.evaluate(() => { window.print = () => {}; });
+      await page.click('[data-x=att-print][data-what=' + what + ']');
+      const n = await page.evaluate(() => document.querySelectorAll('#print-area .pa-page').length);
+      const html = await page.evaluate(() => document.getElementById('print-area').innerHTML);
+      await page.evaluate(() => { document.body.classList.remove('printing'); document.getElementById('print-area').innerHTML = ''; });
+      return { n, html };
+    };
+    const a = await pages('att-all');
+    if (a.n !== nBlocks) throw new Error('출석부 출력 장수: ' + a.n);
+    const c = await pages('con-all');
+    if (c.n < nBlocks) throw new Error('연락처 출력 장수: ' + c.n);
+    const po = await pages('post-all');
+    if (po.n !== nBlocks * 3) throw new Error('게시용 장수(반 ' + nBlocks + '개 × 3): ' + po.n);
+    if ((po.html.match(/class="po-r1"/g) || []).length !== nBlocks * 3 || /출석여부|비고|신청인원/.test(po.html)) throw new Error('게시용 내용');
+    const rows = po.html.split('<table').slice(1).map((t) => (t.match(/<tbody>[\s\S]*<\/tbody>/)[0].match(/<tr>/g) || []).length);
+    if (rows.some((r) => r < 16) || new Set(rows).size !== 1) throw new Error('게시용 줄 수는 모든 반이 16줄이어야 함: ' + rows.join());
+    // 장수 바꾸기 (이 컴퓨터가 기억)
+    await page.selectOption('#post-n', '2');
+    await page.waitForFunction(() => document.querySelector('#post-n').value === '2');
+    const po2 = await pages('post-all');
+    if (po2.n !== nBlocks * 2) throw new Error('게시용 2장씩: ' + po2.n);
+    await page.selectOption('#post-n', '3');
+    await page.waitForFunction(() => document.querySelector('#post-n').value === '3');
+    // 한 반만
+    const one = await pages('post-one');
+    if (one.n !== 3) throw new Error('이 반만 게시용 3장: ' + one.n);
+    console.log('출력 3종: 출석부 ' + a.n + '장 · 연락처 ' + c.n + '장 · 게시용 ' + po.n + '장(반마다 3장·16줄) 확인');
+  }
   console.log('웹앱 인쇄: 전체 인쇄 → 인쇄한 반 기록, 아직 인쇄 안 한 반 0');
   // 엑셀·명렬표도 내려받기 가능
   await page.evaluate(() => { window.__dlNames = []; const c = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { if (this.download) window.__dlNames.push(this.download); return c.apply(this, arguments); }; });
   const dls = [];
   page.on('download', (d) => dls.push(d));
   await page.click('[data-x=att-dl]');
-  for (let k = 0; k < 60 && dls.length < 2; k++) await page.waitForTimeout(100);
-  if (dls.length !== 2) throw new Error('출석부·명렬표 엑셀이 한 번에 2개 받아지지 않음: ' + dls.length);
+  for (let k = 0; k < 80 && dls.length < 3; k++) await page.waitForTimeout(100);
+  if (dls.length !== 3) throw new Error('출석부·명렬표·게시용 엑셀이 한 번에 3개 받아지지 않음: ' + dls.length);
   const names = (await page.evaluate(() => window.__dlNames || [])).slice().sort();
-  if (names.join() !== '명렬표_1107.xlsx,출석부_1107.xlsx') throw new Error('엑셀 파일 이름: ' + names.join());
+  if (names.join() !== '게시용_1107.xlsx,명렬표_1107.xlsx,출석부_1107.xlsx') throw new Error('엑셀 파일 이름: ' + names.join());
   // 내려받은 순서: 출석부 → 명렬표
   await dls[0].saveAs(path.join(OUT, 'att1.xlsx'));
   await dls[1].saveAs(path.join(OUT, 'contacts1.xlsx'));
+  await dls[2].saveAs(path.join(OUT, 'posts1.xlsx'));
   await page.waitForSelector('text=엑셀: 2차 기준으로 받았습니다');
   page.removeAllListeners('download');
   {
@@ -317,13 +350,18 @@ const server = http.createServer((req, res) => {
     if (!allNames.includes('새학생') || allNames.includes('학생00')) throw new Error('교체가 저장되지 않음');
     if (!(d3.changed || []).length) throw new Error('바뀐 반 기록 없음');
   }
-  await page.waitForSelector('[data-x=att-print][data-what=changed]:not([disabled])');
-  const upLabel = await page.textContent('[data-x=att-print][data-what=changed]');
-  if (!/바뀐 반 인쇄/.test(upLabel)) throw new Error('바뀐 반 인쇄 버튼: ' + upLabel);
-  if (!/\(1\)/.test(upLabel)) throw new Error('아직 인쇄 안 한 바뀐 반: ' + upLabel);
-  await page.click('[data-x=att-print][data-what=changed]');
-  await page.waitForSelector('[data-x=att-print][data-what=changed][disabled]');
-  console.log('작업 중 변동: 알림 → 대기자 연락 기록 → 교체 → 저장 → 바뀐 반만 인쇄 확인');
+  await page.waitForSelector('.po-note');
+  const upNote = await page.textContent('.po-note');
+  if (!/바뀐 뒤 아직 인쇄 안 한 반/.test(upNote)) throw new Error('인쇄 안 한 반 표시: ' + upNote);
+  if (await page.$('[data-what=changed]')) throw new Error('[바뀐 반 인쇄] 버튼이 남아 있음');
+  {
+    const la2 = lastAtt();
+    const bi = la2.data.blocks.findIndex((b) => b.v === la2.v);
+    if (bi < 0) throw new Error('바뀐 반을 찾지 못함');
+    await page.click('[data-x=att-print][data-what=att-one][data-i="' + bi + '"]');
+  }
+  await page.waitForFunction(() => !document.querySelector('.po-note'));
+  console.log('작업 중 변동: 알림 → 대기자 연락 기록 → 교체 → 저장 → 그 반만 출력하면 「인쇄 안 한 반」 표시 사라짐');
   // 늦게 저장하는 쪽은 막힘
   const conflict = env.call('attSave', { date: '2026-11-07', data: { blocks: [] }, baseVersion: 1 });
   if (conflict.code !== 'CONFLICT') throw new Error('차수 충돌을 막지 않음');
