@@ -245,7 +245,7 @@ const server = http.createServer((req, res) => {
   for (let k = 0; k < 30 && !lastAtt().data.printed; k++) await page.waitForTimeout(100);
   const pr = lastAtt().data.printed || {};
   if (Object.keys(pr).length !== lastAtt().data.blocks.length) throw new Error('인쇄 기록: ' + JSON.stringify(pr));
-  if (await page.$('.po-note')) throw new Error('모두 인쇄했는데 「인쇄 안 한 반」 표시가 남음');
+  await page.waitForFunction(() => !document.querySelector('.po-note'), null, { timeout: 5000 }).catch(() => { throw new Error('모두 인쇄했는데 「인쇄 안 한 반」 표시가 남음'); });
   // 출력 세 가지: 출석부(반마다 1장) · 연락처 · 게시용(반마다 3장, 16줄 고정, 첫 교실 빨강)
   {
     const nBlocks = lastAtt().data.blocks.length;

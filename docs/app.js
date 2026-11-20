@@ -2055,6 +2055,7 @@
     keys.forEach(function (k) { pr[k] = saved.version; });
     saved.data.printed = pr;
     if (S.att && S.att.data) S.att.data.printed = pr;
+    render();  // 「인쇄 안 한 반」 표시는 서버 응답을 기다리지 않고 바로 지움
     api('attPrinted', { date: S.date, version: saved.version, keys: keys }).then(function (res) { if (res && res.rev) S.rev = res.rev; render(); }).catch(function () { /* 다음에 다시 */ });
   }
 
