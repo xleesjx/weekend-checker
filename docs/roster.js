@@ -565,7 +565,13 @@ var Roster = (function () {
     if (!name) name = str(b.title).replace(/^\d+월\s*\d+일\s*/, '').replace(/\s*수강생\s*명단\s*$/, '');
     var tools = r.same ? r.tool1 : [r.tool1, r.tool2].filter(Boolean).join('/');
     var d = date ? (+date.slice(5, 7)) + '월 ' + (+date.slice(8, 10)) + '일' : '';
-    return { title: (program ? program + ' ' : '') + name + ' 수강생 명단', sub: (d + ' ' + tools).trim(), same: r.same, room1: r.room1, room2: r.room2 };
+    return { title: (d ? d + ' ' : '') + (program ? program + ' ' : '') + name, sub: tools, same: r.same, room1: r.room1, room2: r.room2 };
+  }
+
+  /** 둘째 줄(교구명) 글자 크기: 기본 20pt, 길면 한 줄에 들어가게만 줄임 */
+  function postSubPt(text) {
+    var n = Math.max(1, str(text).length);
+    return Math.max(10, Math.min(20, Math.floor(480 / n)));
   }
 
   function postRowMm(n) { return n > POST_ROWS ? (POST_H.avail - POST_H.title - POST_H.sub - POST_H.room - POST_H.head) / n : POST_H.row; }
@@ -582,7 +588,7 @@ var Roster = (function () {
     var html = '<table class="post" style="--pc:#' + color + ';--rh:' + postRowMm(n).toFixed(2) + 'mm"><colgroup>' +
       POST_COLS_MM.map(function (w) { return '<col style="width:' + w + 'mm">'; }).join('') + '</colgroup><thead>' +
       '<tr><th colspan="4" class="po-t1">' + escHtml(info.title) + '</th></tr>' +
-      '<tr><th colspan="4" class="po-t2">' + escHtml(info.sub) + '</th></tr>' +
+      '<tr><th colspan="4" class="po-t2"' + (postSubPt(info.sub) < 20 ? ' style="font-size:' + postSubPt(info.sub) + 'pt"' : '') + '>' + escHtml(info.sub) + '</th></tr>' +
       '<tr><th colspan="4" class="po-room">' + room + '</th></tr>' +
       '<tr class="po-h"><th>번호</th><th>기관(학교)</th><th>학년/반</th><th>신청자</th></tr></thead><tbody>';
     for (var i = 0; i < n; i++) {
@@ -626,7 +632,7 @@ var Roster = (function () {
         r++;
       };
       band(info.title, 21, POST_H.title, thin);
-      band(info.sub, 15, POST_H.sub, thin);
+      band(info.sub, postSubPt(info.sub), POST_H.sub, thin);
       // 교실 줄: 첫 교실은 진한 빨강·아주 크게
       var rt = info.same
         ? [{ text: '1-4교시 ', font: font(20, true) }, { text: info.room1, font: font(34, true, POST_ROOM_RED) }]

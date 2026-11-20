@@ -249,7 +249,7 @@ tr.cut td { text-decoration: line-through; color: #94A3B8; }
   #print-area table.post th, #print-area table.post td { border: 0.3mm solid #000; padding: 0 2mm; text-align: center; vertical-align: middle; overflow: hidden; white-space: nowrap; line-height: 1.15; }
   #print-area table.post .po-t1, #print-area table.post .po-t2, #print-area table.post .po-room { background: var(--pc); }
   #print-area table.post .po-t1 { height: 18mm; font-size: 21pt; font-weight: 700; }
-  #print-area table.post .po-t2 { height: 13mm; font-size: 15pt; font-weight: 700; white-space: normal; }
+  #print-area table.post .po-t2 { height: 13mm; font-size: 20pt; font-weight: 700; white-space: nowrap; }
   #print-area table.post .po-room { height: 20mm; font-weight: 700; border-bottom: 0.8mm solid #000; }
   #print-area table.post .po-s { font-size: 20pt; }
   #print-area table.post .po-r1 { font-size: 34pt; color: #C00000; }
