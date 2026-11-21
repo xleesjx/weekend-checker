@@ -52,7 +52,7 @@ const fail = (m) => { console.error('실패: ' + m); process.exit(1); };
   // 게시용: 반마다 3장씩 → 한 장씩 나옴, 모든 반 표 크기 같음(학생 수와 무관), 긴 제목·교실도 한 줄, 굵은 바깥 테두리
   const pb = (n, o) => Object.assign({ title: 'x', line: 'x', program: 'SW', name: '기초코딩 오전1반', same: false, room1: '라온실', room2: '놀이실', tool1: '기어목걸이 만들기', tool2: '템플, 언더워터', color: 'BDD7EE',
     students: Array.from({ length: n }, (_, i) => ({ name: '학생' + i, school: i % 5 === 0 ? '울산광역시교육청초등학교' : '울산효문초등학교', ban: '3-3' })) }, o || {});
-  const classes = [pb(16, { tool1: '얼음꽁꽁 북극 만들기, 쪼물락코딩블록', tool2: '팀보로봇, 핑퐁로봇/카미봇 세트' }), pb(8, { color: 'FEBEC9' }), pb(3, { same: true, room2: '', name: '마스터코딩 오전반', tool1: '파이썬', tool2: '' }), pb(16, { program: '창의', name: '메이커1반', room1: '창의실', room2: '혜윰실', tool1: '핏츠, 코너드', tool2: '펑펑 눈내리는 마을' })];
+  const classes = [pb(16, { name: '기초코딩 오전1반 심화 특별 과정 반 추가 이름이 아주 긴 경우' }), pb(16, { tool1: '얼음꽁꽁 북극 만들기, 쪼물락코딩블록', tool2: '팀보로봇, 핑퐁로봇/카미봇 세트' }), pb(8, { color: 'FEBEC9' }), pb(3, { same: true, room2: '', name: '마스터코딩 오전반', tool1: '파이썬', tool2: '' }), pb(16, { program: '창의', name: '메이커1반', room1: '창의실', room2: '혜윰실', tool1: '핏츠, 코너드', tool2: '펑펑 눈내리는 마을' })];
   const post = classes.map((b) => [1, 2, 3].map(() => '<div class="pa-page post">' + R.postSheetHtml(b, '2026-11-14') + '</div>').join('')).join('');
   const np = await run('post', post);
   if (np !== classes.length * 3) fail('게시용 ' + classes.length + '개 반 × 3장이 ' + np + '쪽으로 나옴');
@@ -60,7 +60,7 @@ const fail = (m) => { console.error('실패: ' + m); process.exit(1); };
     const r = t.getBoundingClientRect(), pg = t.closest('.pa-page').getBoundingClientRect(), cs = getComputedStyle(t);
     const t1 = t.querySelector('.po-t1'), t2 = t.querySelector('.po-t2'), room = t.querySelector('.po-room');
     return { w: r.width, h: r.height, l: r.left - pg.left, t: r.top - pg.top, outer: parseFloat(cs.borderTopWidth), inner: parseFloat(getComputedStyle(t.querySelector('tbody td')).borderTopWidth),
-      t1h: t1.getBoundingClientRect().height, roomh: room.getBoundingClientRect().height, t1o: t1.scrollWidth > t1.clientWidth + 1 || t2.scrollWidth > t2.clientWidth + 1 || t2.getBoundingClientRect().height > 13 * 3.78 + 1 || [...t.querySelectorAll('td')].some((c) => c.scrollWidth > c.clientWidth + 1), roomo: room.scrollWidth > room.clientWidth + 1 };
+      t1h: t1.getBoundingClientRect().height, roomh: room.getBoundingClientRect().height, t1o: t1.scrollWidth > t1.clientWidth + 1 || t1.getBoundingClientRect().height > 18 * 3.78 + 1 || t2.scrollWidth > t2.clientWidth + 1 || t2.getBoundingClientRect().height > 13 * 3.78 + 1 || [...t.querySelectorAll('td')].some((c) => c.scrollWidth > c.clientWidth + 1), roomo: room.scrollWidth > room.clientWidth + 1 };
   }));
   const hs = pm.map((x) => x.h);
   if (Math.max(...hs) - Math.min(...hs) > 0.5) fail('게시용 표 길이가 반마다 다름: ' + hs.map((h) => (h / MM).toFixed(1)).join(', '));

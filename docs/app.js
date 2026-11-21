@@ -6,7 +6,7 @@
   var H = Core.HEADER;
   var POLL_MS = 20000;
   // 화면 코드 버전. docs/version.txt 와 같게 맞춥니다 (다르면 '새 버전' 안내)
-  var APP_VERSION = '41';
+  var APP_VERSION = '42';
   var S = {
     token: null, user: null, data: null, date: null, rev: null, view: 'home',
     showAll: false, open: null, query: '', busy: false, lastUpload: null, settings: null, loadedAt: null, newVersion: false,
@@ -1621,7 +1621,7 @@
 
   function splitProblems() {
     var A = S.att, out = [];
-    A.sources.forEach(function (s) { if (s.students.length > Roster.CAP) out.push('「' + s.label + '」이 ' + s.students.length + '명입니다. 한 반은 16명 이하여야 합니다.'); });
+    A.sources.forEach(function (s) { var cap = capFor(s.group, s.parts); if (s.students.length > cap) out.push('「' + s.label + '」이 ' + s.students.length + '명입니다. 한 반은 ' + cap + '명 이하여야 합니다.'); });
     (A.sets || []).forEach(function (set) {
       var where = {};
       A.sources.forEach(function (s) { s.students.forEach(function (st) { if (set.nos.indexOf(st.no) >= 0) where[s.key] = true; }); });
@@ -1680,7 +1680,7 @@
     if (probs.length) html += '<section class="card pad small" style="border-color:#FECDCA;background:var(--red-bg)">' + probs.map(esc).join('<br>') + '<br><span class="muted">작업 시작 뒤 [⇄]로 옮겨 맞출 수 있습니다.</span></section>';
     html += '<section class="card pad"><b>분반 미리보기</b> <span class="muted small">같은 반 요청 → 같은 학교 → 한 반 16명 이하 → 인원 균등 (창의 1,2반은 1학년도 균등)</span><div class="tbox" style="margin-top:8px"><table class="grid"><thead><tr><th>반</th><th>인원</th><th>학생 (이름순)</th></tr></thead><tbody>' +
       A.sources.map(function (x) {
-        var over = x.students.length > Roster.CAP;
+        var over = x.students.length > capFor(x.group, x.parts);
         return '<tr><td><b>' + esc(x.label) + '</b></td><td style="color:' + (over ? 'var(--red)' : 'inherit') + '">' + x.students.length + '명' + (x.multi && x.parts > 1 ? ' · 1학년 ' + x.students.filter(function (z) { return z.grade1; }).length : '') + '</td>' +
           '<td class="small">' + Roster.byName(x.students).map(function (z) { return esc(z.name); }).join(', ') + '</td></tr>';
       }).join('') + '</tbody></table></div></section>';
@@ -1693,7 +1693,7 @@
       acceptKeep: A.acceptKeep,
       blocks: A.blocks.map(function (b) {
         var s = srcByKey(b.src);
-        return { key: b.key, group: b.group, color: colorMap()[b.group] || '', time: b.time, label: b.label, v: 1, program: b.program, name: b.name, same: !!b.same, room1: b.room1, room2: b.room2, tool1: b.tool1, tool2: b.tool2,
+        return { key: b.key, group: b.group, color: colorMap()[b.group] || '', cap: capFor(b.group, A.blocks.filter(function (x) { return x.group === b.group; }).length), time: b.time, label: b.label, v: 1, program: b.program, name: b.name, same: !!b.same, room1: b.room1, room2: b.room2, tool1: b.tool1, tool2: b.tool2,
           tag: b.tag, tagEdited: !!b.tagEdited, title: Roster.makeTitle(S.date, b), line: Roster.makeLine(b),
           students: Roster.byName(s.students).map(function (st) { return { no: st.no, name: st.name, school: st.school, ban: st.ban, status: '' }; }) };
       })
@@ -1734,7 +1734,7 @@
 
   function downloadExcel(data, version, only, name) {
     var blocks = (data.blocks || []).filter(function (b) { return !only || only.indexOf(b.key) >= 0; }).map(function (b) {
-      return { title: b.title, line: b.line, tag: b.tag, color: blockColor(b), students: (b.students || []).filter(function (s) { return s.status !== '취소'; }) };
+      return { title: b.title, line: b.line, tag: b.tag, color: blockColor(b), cap: blockCap(b, data.blocks), students: (b.students || []).filter(function (s) { return s.status !== '취소'; }) };
     });
     var wb = Roster.buildWorkbook(ExcelJS, blocks, mmdd(S.date));
     return wb.xlsx.writeBuffer().then(function (buf) { saveBlob(buf, name || Roster.fileName(S.date).replace(/\.xlsx$/, only ? '_바뀐반.xlsx' : '.xlsx')); });
@@ -1742,12 +1742,12 @@
 
   /** 게시용 명단표 엑셀 (반마다 한 장) */
   function downloadPosts(data) {
-    var wb = Roster.buildPostBook(ExcelJS, postBlocks(data.blocks || []), mmdd(S.date), S.date);
+    var wb = Roster.buildPostBook(ExcelJS, postBlocks(data.blocks || [], data.blocks || []), mmdd(S.date), S.date);
     return wb.xlsx.writeBuffer().then(function (buf) { saveBlob(buf, Roster.postFileName(S.date)); });
   }
-  function postBlocks(list) {
+  function postBlocks(list, all) {
     return list.map(function (b) {
-      return { title: b.title, line: b.line, color: blockColor(b), program: b.program, name: b.name, same: b.same, room1: b.room1, room2: b.room2, tool1: b.tool1, tool2: b.tool2,
+      return { title: b.title, line: b.line, color: blockColor(b), cap: blockCap(b, all), program: b.program, name: b.name, same: b.same, room1: b.room1, room2: b.room2, tool1: b.tool1, tool2: b.tool2,
         students: (b.students || []).filter(function (x) { return x.status !== '취소'; }) };
     });
   }
@@ -1846,6 +1846,21 @@
     });
     return Roster.groupColors(list);
   }
+  /** 반 정원: 설정의 정원(같은 수업반 합계)을 그 수업반의 반 개수로 나눈 값, 최대 16 (예: 마스터 12 → 12명, 기초 32 → 16명씩) */
+  function capFor(group, parts) {
+    var sum = 0;
+    (S.data.classes || []).forEach(function (c) { if ((c['수업반'] || c['접수명']) === group) sum += +c.cap || 0; });
+    if (!sum) return Roster.CAP;
+    return Math.max(1, Math.min(Roster.CAP, Math.ceil(sum / Math.max(1, parts || 1))));
+  }
+  /** 반 블록의 정원: 작업 시작 때 저장해 둔 값 → 지금 설정 */
+  function blockCap(b, all) {
+    if (b && +b.cap) return +b.cap;
+    var list = all || (S.att && S.att.blocks) || (S.data.att && S.data.att.data && S.data.att.data.blocks) || [];
+    var g = (b && (b.group || gOfKey(b.key))) || '';
+    return capFor(g, list.filter(function (x) { return (x.group || gOfKey(x.key)) === g; }).length);
+  }
+
   /** 반 블록의 제목 색: 작업 시작 때 저장해 둔 색 → 지금 설정 */
   function blockColor(b) { return (b && (b.color || colorMap()[b.group || gOfKey(b.key)])) || ''; }
 
@@ -1902,7 +1917,7 @@
         '<button class="btn sm" data-x="chg-keep" data-no="' + esc(o.st.no) + '" title="출석부를 그대로 두고 이 알림만 지웁니다 (강사가 결석 처리)">그대로 두기</button></div>' + waitTable(g, o) + '</div>';
     });
     ch.add.forEach(function (a) {
-      var targets = blocks.map(function (b, bi) { return { b: b, bi: bi }; }).filter(function (x) { return gOfKey(x.b.key) === a.group && live(x.b) < Roster.CAP; });
+      var targets = blocks.map(function (b, bi) { return { b: b, bi: bi }; }).filter(function (x) { return gOfKey(x.b.key) === a.group && live(x.b) < blockCap(x.b, blocks); });
       var r = a.row;
       html += '<div class="chg"><div><span class="badge new">새로 승인</span> <b>' + esc(r.cells[9]) + '</b> <span class="muted small">' + esc(r.cells[10]) + ' ' + esc(r.cells[11]) + ' · ' + esc(a.group) +
         (r.appliedAt ? ' · ' + esc(shortTs(r.appliedAt)) + ' 신청' : '') + '</span>' + (r.level ? ' <span class="badge ' + (r.level === 'red' ? 'red' : 'amber') + '">' + esc(issueText(r)) + '</span>' : '') + '</div><div class="row" style="gap:6px">' +
@@ -1995,7 +2010,7 @@
       var idx = function (s) { return all.indexOf(s); };
       var sib = blocks.filter(function (x) { return x !== b && gOfKey(x.key) === gOfKey(b.key); });
       var isUp = up.indexOf(b.key) >= 0 && saved.version > 1, isCh = A.changed && A.changed[b.key];
-      var sheet = Roster.sheetHtml({ title: b.title, line: b.line, tag: b.tag, color: blockColor(b), students: liveList }, { cell: function (t, c, v, s) {
+      var sheet = Roster.sheetHtml({ title: b.title, line: b.line, tag: b.tag, color: blockColor(b), cap: blockCap(b, blocks), students: liveList }, { cell: function (t, c, v, s) {
         if (t === 4 && c === 10) return '<span class="xk-h">' + (sib.length ? '반 옮기기 · ' : '') + '당일 결석 · 기한 후 취소</span> ' + tip('당일 결석: 출석부에 남고 결석 기록만 남깁니다. 기한 후 취소: 취소 기한이 지난 뒤 취소한 학생을 출석부에서 빼고 기한 후 취소로 기록합니다. 기한 안에 통합예약에서 취소한 학생은 명단을 다시 받으면 「변동 사항」에 나옵니다.');
         if (!s) return;
         if (c === 1) return '<input type="text" class="cellin' + (Roster.officialSchool(s.school, S.data.schools || []).ok ? '' : ' warn') + '" value="' + esc(s.school) + '" data-xi="att-e2" data-i="' + i + '" data-j="' + idx(s) + '" data-f="school" aria-label="학교명">';
@@ -2012,7 +2027,7 @@
       var open = A.openSet[b.key];
       html += '<section class="card pad" style="display:flex;flex-direction:column;gap:8px' + (isCh ? ';border:2px solid var(--blue)' : (isUp ? ';border:2px solid #F59E0B' : '')) + '"><div class="row between"><b>' + esc(b.name || b.label || (i + 1) + '번째 반') +
         (isCh ? ' <span class="badge new">바뀜 · 저장 필요</span>' : (isUp ? ' <span class="badge warn">바뀜 · 아직 인쇄 안 함</span>' : '')) + '</b>' +
-        '<div class="row" style="gap:6px"><span style="font-weight:700;color:' + (live > Roster.CAP ? 'var(--red)' : 'inherit') + '">' + live + '명' + (live > Roster.CAP ? ' ⚠ 16명 초과' : '') + '</span>' +
+        '<div class="row" style="gap:6px"><span style="font-weight:700;color:' + (live > blockCap(b, blocks) ? 'var(--red)' : 'inherit') + '">' + live + '명' + (live > blockCap(b, blocks) ? ' ⚠ ' + blockCap(b, blocks) + '명 초과' : '') + '</span>' +
         '<button class="btn sm" data-x="att-setopen" data-key="' + esc(b.key) + '">' + (open ? '반 설정 닫기' : '반 설정 (이름·교실·교구)') + '</button></div></div>' +
         '<div class="po-box"><b>이 반만 출력</b>' +
         '<button class="btn sm" data-x="att-print" data-what="att-one" data-i="' + i + '">출석부</button>' +
@@ -2043,7 +2058,7 @@
 
   function printSheets(blocks) {
     printHtml(blocks.map(function (b) {
-      return '<div class="pa-page">' + Roster.sheetHtml({ title: b.title, line: b.line, tag: b.tag, color: blockColor(b), students: (b.students || []).filter(function (x) { return x.status !== '취소'; }) }, { print: true }) + '</div>';
+      return '<div class="pa-page">' + Roster.sheetHtml({ title: b.title, line: b.line, tag: b.tag, color: blockColor(b), cap: blockCap(b), students: (b.students || []).filter(function (x) { return x.status !== '취소'; }) }, { print: true }) + '</div>';
     }).join(''));
   }
 

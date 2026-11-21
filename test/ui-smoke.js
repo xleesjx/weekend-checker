@@ -206,6 +206,16 @@ const server = http.createServer((req, res) => {
     if (new Set(cols).size < 3 || lat.some((c) => !/^[0-9A-F]{6}$/.test(c))) throw new Error('반별 제목 색: ' + cols.join(' / ') + ' · 저장 ' + lat.join());
     console.log('반별 제목 색:', cols.join(' / '));
   }
+  // 반 정원: 마스터는 12명, 나머지는 16명 (작업 시작 때 저장 → 번호는 정원까지만)
+  {
+    const caps = lastAtt().data.blocks.map((b) => [b.group, b.cap]);
+    const mc = caps.filter((c) => /마스터/.test(c[0]));
+    if (!mc.length || mc.some((c) => c[1] !== 12) || caps.filter((c) => !/마스터/.test(c[0])).some((c) => c[1] !== 16)) throw new Error('반 정원 저장: ' + JSON.stringify(caps));
+    const nums = await page.$$eval('table.xls', (ts) => ts.map((t) => [...t.querySelectorAll('tr')].slice(5, 21).map((tr) => tr.querySelector('td').textContent).filter((x) => /^\d+$/.test(x)).length));
+    const mi = lastAtt().data.blocks.findIndex((b) => /마스터/.test(b.group));
+    if (nums[mi] !== 12 || nums.filter((n, i) => i !== mi).some((n) => n !== 16)) throw new Error('화면 번호 줄 수(마스터만 12): ' + nums.join());
+    console.log('반 정원: 마스터 12명(번호 12번까지), 나머지 16명 확인');
+  }
   // 반 설정은 고정된 출석부에서
   const openSet = async (i) => { await page.click('[data-x=att-setopen] >> nth=' + i); await page.waitForSelector('[data-xc=att-b][data-i="' + i + '"][data-f=room1]'); };
   for (let i = 0; i < 4; i++) await openSet(i);

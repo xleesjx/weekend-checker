@@ -344,7 +344,7 @@ var Roster = (function () {
     var list = byName(blk.students);
     for (var i = 0; i < STUDENT_ROWS; i++) {
       var s = list[i];
-      if (s || i < CAP) v[5 + i][0] = i + 1;
+      if (s || i < (blk.cap || CAP)) v[5 + i][0] = i + 1;
       if (s) { v[5 + i][1] = s.school; v[5 + i][2] = s.ban; v[5 + i][3] = s.name; v[5 + i][4] = blk.tag; }
     }
     var sr = 5 + STUDENT_ROWS;
@@ -565,14 +565,41 @@ var Roster = (function () {
     if (!name) name = str(b.title).replace(/^\d+월\s*\d+일\s*/, '').replace(/\s*수강생\s*명단\s*$/, '');
     var tools = r.same ? r.tool1 : [r.tool1, r.tool2].filter(Boolean).join('/');
     var d = date ? (+date.slice(5, 7)) + '월 ' + (+date.slice(8, 10)) + '일' : '';
-    return { title: (d ? d + ' ' : '') + (program ? program + ' ' : '') + name, sub: tools, same: r.same, room1: r.room1, room2: r.room2 };
+    var title = (d ? d + ' ' : '') + (program ? program + ' ' : '') + name;
+    return { title: title, sub: tools, titlePt: fitPt(title, 30, 12, POST_FIT_MM), subPt: fitPt(tools, 20, 10, POST_FIT_MM), same: r.same, room1: r.room1, room2: r.room2 };
   }
 
-  /** 둘째 줄(교구명) 글자 크기: 기본 20pt, 길면 한 줄에 들어가게만 줄임 */
-  function postSubPt(text) {
-    var n = Math.max(1, str(text).length);
-    return Math.max(10, Math.min(20, Math.floor(480 / n)));
+  /* 글자 폭 어림 (한글 1em, 숫자·영문은 좁게) — 브라우저에서는 실제 글꼴로 재서 쓰고, 못 쓰면 이 어림값을 씁니다 */
+  function textEm(text) {
+    var em = 0;
+    String(text).split('').forEach(function (ch) {
+      if (/[가-힣ㄱ-ㅎㅏ-ㅣ一-鿿]/.test(ch)) em += 1;
+      else if (/[0-9]/.test(ch)) em += 0.62;
+      else if (/[A-Z]/.test(ch)) em += 0.74;
+      else if (/[a-z]/.test(ch)) em += 0.62;
+      else if (/\s/.test(ch)) em += 0.34;
+      else em += 0.5;
+    });
+    return em;
   }
+  var fitCtx = null;
+  /** 한 줄(widthMm)에 들어가는 가장 큰 글자 크기(pt). 굵은 글씨 기준, maxPt를 넘지 않고 minPt 밑으로 내려가지 않음 */
+  function fitPt(text, maxPt, minPt, widthMm) {
+    text = str(text);
+    if (!text) return maxPt;
+    var em = textEm(text);
+    try {
+      if (typeof document !== 'undefined') {
+        fitCtx = fitCtx || document.createElement('canvas').getContext('2d');
+        fitCtx.font = 'bold 100px "맑은 고딕", "Malgun Gothic", sans-serif';
+        var w = fitCtx.measureText(text).width;
+        if (w > 0) em = w / 100;
+      }
+    } catch (e) { /* 어림값 사용 */ }
+    var pt = Math.floor((widthMm * 96 / 25.4) / (em * 96 / 72) * 0.97);
+    return Math.max(minPt, Math.min(maxPt, pt));
+  }
+  var POST_FIT_MM = 160;
 
   function postRowMm(n) { return n > POST_ROWS ? (POST_H.avail - POST_H.title - POST_H.sub - POST_H.room - POST_H.head) / n : POST_H.row; }
 
@@ -580,21 +607,21 @@ var Roster = (function () {
   function postSheetHtml(blk, date) {
     var info = postInfo(blk, date);
     var list = byName((blk.students || []).filter(function (x) { return x.status !== '취소'; }));
-    var n = Math.max(POST_ROWS, list.length);
+    var n = Math.max(POST_ROWS, list.length), cap = blk.cap || CAP;
     var color = /^[0-9A-Fa-f]{6}$/.test(str(blk.color)) ? str(blk.color) : TITLE_FILL;
     var room = info.same
       ? '<span class="po-s">1-4교시</span> <b class="po-r1">' + escHtml(info.room1) + '</b>'
       : '<span class="po-s">1-2교시</span> <b class="po-r1">' + escHtml(info.room1) + '</b><span class="po-s">, 3-4교시</span> <b class="po-r2">' + escHtml(info.room2) + '</b>';
     var html = '<table class="post" style="--pc:#' + color + ';--rh:' + postRowMm(n).toFixed(2) + 'mm"><colgroup>' +
       POST_COLS_MM.map(function (w) { return '<col style="width:' + w + 'mm">'; }).join('') + '</colgroup><thead>' +
-      '<tr><th colspan="4" class="po-t1">' + escHtml(info.title) + '</th></tr>' +
-      '<tr><th colspan="4" class="po-t2"' + (postSubPt(info.sub) < 20 ? ' style="font-size:' + postSubPt(info.sub) + 'pt"' : '') + '>' + escHtml(info.sub) + '</th></tr>' +
+      '<tr><th colspan="4" class="po-t1" style="font-size:' + info.titlePt + 'pt">' + escHtml(info.title) + '</th></tr>' +
+      '<tr><th colspan="4" class="po-t2" style="font-size:' + info.subPt + 'pt">' + escHtml(info.sub) + '</th></tr>' +
       '<tr><th colspan="4" class="po-room">' + room + '</th></tr>' +
       '<tr class="po-h"><th>번호</th><th>기관(학교)</th><th>학년/반</th><th>신청자</th></tr></thead><tbody>';
     for (var i = 0; i < n; i++) {
       var s = list[i];
       var sl = s ? str(s.school).length : 0;
-      html += '<tr><td>' + (i + 1) + '</td><td' + (sl > 8 ? ' style="font-size:' + (sl > 11 ? 14 : sl > 10 ? 16 : sl > 9 ? 18 : 20) + 'pt"' : '') + '>' + (s ? escHtml(s.school) : '') + '</td><td>' + (s ? escHtml(s.ban) : '') + '</td><td>' + (s ? escHtml(s.name) : '') + '</td></tr>';
+      html += '<tr><td>' + (s || i < cap ? (i + 1) : '') + '</td><td' + (sl > 8 ? ' style="font-size:' + (sl > 11 ? 14 : sl > 10 ? 16 : sl > 9 ? 18 : 20) + 'pt"' : '') + '>' + (s ? escHtml(s.school) : '') + '</td><td>' + (s ? escHtml(s.ban) : '') + '</td><td>' + (s ? escHtml(s.name) : '') + '</td></tr>';
     }
     return html + '</tbody></table>';
   }
@@ -617,22 +644,22 @@ var Roster = (function () {
     blocks.forEach(function (blk, bi) {
       var info = postInfo(blk, date);
       var list = byName((blk.students || []).filter(function (x) { return x.status !== '취소'; }));
-      var n = Math.max(POST_ROWS, list.length);
+      var n = Math.max(POST_ROWS, list.length), cap = blk.cap || CAP;
       var color = /^[0-9A-Fa-f]{6}$/.test(str(blk.color)) ? str(blk.color) : TITLE_FILL;
       var top = r;
       // 제목 3줄(칸 합침)
       var band = function (value, size, height, bottom) {
         ws.mergeCellsWithoutStyle(r, 1, r, 4);
         for (var c = 1; c <= 4; c++) {
-          ws.getCell(r, c).style = { font: font(size, true), fill: fill(color), alignment: { horizontal: 'center', vertical: 'middle', wrapText: true },
+          ws.getCell(r, c).style = { font: font(size, true), fill: fill(color), alignment: { horizontal: 'center', vertical: 'middle', wrapText: false, shrinkToFit: true },
             border: { left: c === 1 ? med : undefined, right: c === 4 ? med : undefined, top: r === top ? med : thin, bottom: bottom } };
         }
         ws.getCell(r, 1).value = value;
         ws.getRow(r).height = pt(height);
         r++;
       };
-      band(info.title, 21, POST_H.title, thin);
-      band(info.sub, postSubPt(info.sub), POST_H.sub, thin);
+      band(info.title, info.titlePt, POST_H.title, thin);
+      band(info.sub, info.subPt, POST_H.sub, thin);
       // 교실 줄: 첫 교실은 진한 빨강·아주 크게
       var rt = info.same
         ? [{ text: '1-4교시 ', font: font(20, true) }, { text: info.room1, font: font(34, true, POST_ROOM_RED) }]
@@ -650,7 +677,7 @@ var Roster = (function () {
       r++;
       for (var k = 0; k < n; k++) {
         var st = list[k], last = k === n - 1;
-        [k + 1, st ? st.school : '', st ? st.ban : '', st ? st.name : ''].forEach(function (v, i) {
+        [(st || k < cap) ? k + 1 : '', st ? st.school : '', st ? st.ban : '', st ? st.name : ''].forEach(function (v, i) {
           var cell = ws.getCell(r, i + 1);
           if (v !== '' && v !== null) cell.value = v;
           cell.style = { font: font(22, false), alignment: { horizontal: 'center', vertical: 'middle', shrinkToFit: i === 1 },
